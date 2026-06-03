@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>OwnYourShip</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+
+<div id="layout">
+
+  <!-- Security banner -->
+  <div id="security-banner">
+    <span>&#9888;</span>
+    <span>Code snippets from this project are sent to the Anthropic API for question generation and grading.</span>
+    <a href="https://console.anthropic.com/settings/limits" target="_blank" rel="noopener">Set a spend limit &rarr;</a>
+  </div>
+
+  <!-- Sidebar -->
+  <nav id="sidebar">
+    <div class="logo">Own<span>Your</span>Ship</div>
+    <button class="nav-btn active" id="nav-quiz">&#128218; Quiz</button>
+    <button class="nav-btn" id="nav-stats">&#128202; Stats</button>
+    <div class="spacer"></div>
+    <button id="end-session-btn">&#x2715; End Session</button>
+  </nav>
+
+  <!-- Main -->
+  <main id="main">
+
+    <!-- Welcome screen -->
+    <div class="screen active" id="screen-welcome">
+      <h1>Ready to own it?</h1>
+      <p class="subtitle" id="welcome-subtitle">Loading project...</p>
+
+      <div class="project-card" id="project-card">
+        <div>
+          <div class="proj-name" id="proj-name">—</div>
+          <div class="proj-meta" id="proj-meta">Scanning...</div>
+        </div>
+      </div>
+
+      <div style="margin-bottom:12px; font-size:14px; font-weight:600; color:var(--muted);">Select mode</div>
+      <div class="mode-grid">
+        <div class="mode-card selected" data-mode="easy">
+          <div class="mode-name">Easy</div>
+          <div class="mode-desc">Multiple choice only. Good for a first pass through unfamiliar code.</div>
+        </div>
+        <div class="mode-card" data-mode="intermediate">
+          <div class="mode-name">Intermediate</div>
+          <div class="mode-desc">Multiple choice, deeper understanding required.</div>
+        </div>
+        <div class="mode-card" data-mode="hard">
+          <div class="mode-name">Hard</div>
+          <div class="mode-desc">Mix of multiple choice and free-text answers graded by AI.</div>
+        </div>
+        <div class="mode-card" data-mode="tailored">
+          <div class="mode-name">Tailored</div>
+          <div class="mode-desc">Adapts in real time. Focuses on your weak spots, skips what you know.</div>
+        </div>
+      </div>
+
+      <button id="btn-start" disabled>Start Quiz</button>
+    </div>
+
+    <!-- Scanning screen -->
+    <div class="screen" id="screen-scanning">
+      <div class="spinner"></div>
+      <p>Scanning project structure...</p>
+      <p style="margin-top:8px; font-size:12px; color:var(--muted);">This only reads file names and signatures — no full file content yet.</p>
+    </div>
+
+    <!-- Quiz screen -->
+    <div class="screen" id="screen-quiz">
+      <div id="quiz-header">
+        <span class="badge badge-mode" id="q-mode-badge">Easy</span>
+        <span class="badge badge-file" id="q-file-badge">file.py</span>
+        <span id="q-counter" class="text-muted"></span>
+        <span id="q-score" class="text-muted"></span>
+        <span class="badge badge-cost" id="q-cost-badge">~$0.0000</span>
+      </div>
+
+      <div class="question-card">
+        <div id="q-text"></div>
+
+        <!-- Code snippet -->
+        <div class="code-snippet-wrap hidden" id="code-snippet-wrap">
+          <pre id="code-snippet"></pre>
+        </div>
+
+        <!-- Multiple choice -->
+        <div class="mc-options hidden" id="mc-options"></div>
+
+        <!-- Try again hint (shown after 1st wrong attempt) -->
+        <div id="try-again-msg" class="hidden">Incorrect &mdash; one attempt remaining</div>
+      </div>
+
+      <!-- Feedback -->
+      <div id="feedback-card">
+        <div class="feedback-header">
+          <span class="feedback-icon" id="fb-icon"></span>
+          <span class="feedback-title" id="fb-title"></span>
+        </div>
+        <div class="feedback-text" id="fb-text"></div>
+        <div class="feedback-explanation" id="fb-explanation"></div>
+        <div class="action-row" style="margin-top:16px;">
+          <button class="btn-primary" id="btn-next">Next Question</button>
+          <button class="btn-secondary" id="btn-see-stats">View Stats</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Session finished screen -->
+    <div class="screen" id="screen-done">
+      <div id="session-done">
+        <h2>Session complete!</h2>
+        <p id="done-summary">You answered all available questions.</p>
+        <button class="btn-primary" id="btn-new-session">Start New Session</button>
+        <button class="btn-secondary" id="btn-done-stats" style="margin-top:10px;">View Stats</button>
+      </div>
+    </div>
+
+    <!-- Stats screen -->
+    <div class="screen" id="screen-stats">
+      <h2>Your Progress</h2>
+
+      <!-- Tab bar -->
+      <div class="tab-bar">
+        <button class="tab-btn active" data-tab="overview">Overview</button>
+        <button class="tab-btn" data-tab="history">Question History</button>
+      </div>
+
+      <!-- Overview tab -->
+      <div class="tab-pane" id="tab-overview">
+        <div class="stat-section">
+          <div class="coverage-big">
+            <div class="coverage-pct" id="stats-pct">—%</div>
+            <div class="coverage-label">of meaningful code blocks demonstrated</div>
+            <div style="margin-top:12px; max-width:300px; margin-left:auto; margin-right:auto;">
+              <div class="progress-bar"><div class="progress-fill" id="stats-pct-bar" style="width:0%"></div></div>
+            </div>
+          </div>
+          <div id="achievement-banner-inline" class="achievement-banner hidden">
+            <h2>95% Coverage Achieved</h2>
+            <p>You can stand behind this code.</p>
+          </div>
+        </div>
+
+        <div class="stat-section">
+          <h3>By File</h3>
+          <table id="file-table">
+            <thead><tr><th>File</th><th>Blocks</th><th>Coverage</th></tr></thead>
+            <tbody id="file-tbody"></tbody>
+          </table>
+        </div>
+
+        <div class="stat-section">
+          <h3>By Type</h3>
+          <table id="concept-table">
+            <thead><tr><th>Block Type</th><th>Total</th><th>Correct</th><th>Coverage</th></tr></thead>
+            <tbody id="concept-tbody"></tbody>
+          </table>
+        </div>
+
+        <div class="stat-section">
+          <h3>Sessions</h3>
+          <table id="session-table">
+            <thead><tr><th>Date</th><th>Mode</th><th>Questions</th><th>Score</th><th>Est. Cost</th></tr></thead>
+            <tbody id="session-tbody"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- History tab -->
+      <div class="tab-pane hidden" id="tab-history">
+        <div id="history-content"></div>
+      </div>
+    </div>
+
+  </main>
+
+  <!-- Footer -->
+  <div id="footer">
+    OwnYourShip &mdash; progress stored locally in <code>.oys/progress.db</code> &mdash;
+    <a href="https://github.com/anthropics/anthropic-sdk-python" target="_blank" rel="noopener">Powered by Claude Haiku</a>
+  </div>
+
+</div>
+
+<!-- Achievement overlay -->
+<div id="achievement-overlay">
+  <div class="achievement-modal">
+    <div class="trophy">&#127942;</div>
+    <h1>95% Coverage!</h1>
+    <p>You can stand behind this code.</p>
+    <button class="btn-primary" id="btn-achievement-close">Continue</button>
+  </div>
+</div>
+
+<!-- Cost warning toast -->
+<div id="cost-toast">
+  <strong>&#9888; Cost warning</strong><br>
+  This session has exceeded your warning threshold.<br>
+  <a href="https://console.anthropic.com/settings/limits" target="_blank" rel="noopener">Manage spend limits</a>
+</div>
+
+<script src="/static/app.js"></script>
+</body>
+</html>
