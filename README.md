@@ -8,8 +8,7 @@ at the very least explain how the code blocks work together.
 OwnYourShip quizzes you on your own code, at whatever level you want to be tested. It is 
 a learning tool for vibe coders to learn what they are coding, without actually slowing
 their projects down. It runs locally (using your own Anthropic API key) to create questions
-around your own projects, so that you know what you can both ship cool projects AND know
-how they work.
+around your own projects, so that you can both ship cool projects AND know how they work.
 
 It is by no means complete yet - in fact, I am using Claude to patch bugs as we go. I
 only just caught it changing it's answers mid explanation, so it isn't reliable yet
@@ -52,7 +51,7 @@ instructions below!
 ### 1. Clone or download the project
 
 ```
-git clone <repo-url>
+git clone <https://github.com/JemHRice/ownyourship>
 cd ownyourship
 ```
 
