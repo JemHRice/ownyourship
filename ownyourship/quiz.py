@@ -8,9 +8,9 @@ import anthropic
 
 HAIKU_MODEL = "claude-haiku-4-5-20251001"
 
-# Haiku 3.5 pricing used as estimate; actual Haiku 4.5 pricing may differ.
-_INPUT_COST_PER_TOKEN = 0.80 / 1_000_000
-_OUTPUT_COST_PER_TOKEN = 4.00 / 1_000_000
+# Haiku 4.5 pricing: $1.00 input / $5.00 output per 1M tokens.
+_INPUT_COST_PER_TOKEN = 1.00 / 1_000_000
+_OUTPUT_COST_PER_TOKEN = 5.00 / 1_000_000
 
 
 def estimate_cost(input_tokens: int, output_tokens: int) -> float:
@@ -183,7 +183,6 @@ def select_next_block(
     answered_ids: set,
     mode: str,
     session_perf: Dict,  # {block_id: {"correct": int, "total": int}}
-    all_time_perf: Dict,
 ) -> Optional[Dict]:
     candidates = [b for b in all_blocks if b["id"] not in answered_ids]
     if not candidates:

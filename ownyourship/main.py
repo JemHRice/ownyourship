@@ -19,7 +19,6 @@ app = typer.Typer(
 def _find_free_port() -> int:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.bind(("127.0.0.1", 0))
-        s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         return s.getsockname()[1]
 
 
@@ -40,7 +39,7 @@ def _show_disclaimer_prompt(project_path: Path) -> bool:
     typer.echo("")
     typer.echo("  1. YOUR CODE IS SENT TO ANTHROPIC")
     typer.echo("     Snippets of this project are transmitted to the Anthropic")
-    typer.echo("     API to generate questions and grade answers.")
+    typer.echo("     API to generate quiz questions.")
     typer.echo("     Do NOT use on confidential, classified, or proprietary")
     typer.echo("     code without your organisation's explicit consent.")
     typer.echo("")
@@ -182,7 +181,10 @@ def main(
     webbrowser.open(url)
 
     try:
-        shutdown_event.wait()
+        # Event.wait() with no timeout can't be interrupted by Ctrl+C on
+        # Windows — poll with a timeout so KeyboardInterrupt gets through.
+        while not shutdown_event.wait(timeout=1.0):
+            pass
         typer.echo("\nShutting down (browser requested)...")
     except KeyboardInterrupt:
         typer.echo("\nShutting down...")

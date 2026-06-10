@@ -14,7 +14,7 @@ DEFAULT_CONFIG: dict = {
         ".oys", "dist", "build", ".next", ".nuxt",
         "coverage", ".pytest_cache", ".mypy_cache",
         ".ruff_cache", "target", "bin", "obj",
-        ".idea", ".vscode",
+        ".idea", ".vscode", "migrations",
     ],
     "excluded_patterns": [
         "*.min.js", "*.min.css",
@@ -26,7 +26,6 @@ DEFAULT_CONFIG: dict = {
         "*.spec.js", "*.spec.ts",
         "*.pyc", "*.pyo", "*.pyd",
         "*.log",
-        "migrations",
     ],
     "cost_warning_threshold_usd": 0.50,
     "disclaimer_acknowledged": False,

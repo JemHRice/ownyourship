@@ -14,6 +14,7 @@ const S = {
   costWarningShown: false,
   achievementShown: false,
   wrongAttempts: 0,
+  historyOffset: 0,
 };
 
 // ── DOM helpers ──────────────────────────────────────────────────────────────
@@ -461,25 +462,37 @@ function renderStats(stats) {
 
 // ── History ──────────────────────────────────────────────────────────────────
 
-async function loadHistory() {
+const HISTORY_PAGE = 10;
+
+$('btn-history-more').addEventListener('click', () => loadHistory(false));
+
+async function loadHistory(reset = true) {
   const container = $('history-content');
-  container.innerHTML = '<p class="text-muted" style="padding:16px 0">Loading...</p>';
+  const moreBtn = $('btn-history-more');
+  if (reset) {
+    S.historyOffset = 0;
+    container.innerHTML = '<p class="text-muted" style="padding:16px 0">Loading...</p>';
+    hide(moreBtn);
+  }
+  moreBtn.disabled = true;
   try {
-    const sessions = await GET('/api/history');
-    renderHistory(sessions);
+    const sessions = await GET(`/api/history?limit=${HISTORY_PAGE}&offset=${S.historyOffset}`);
+    if (reset) container.innerHTML = '';
+    if (reset && !sessions.length) {
+      container.innerHTML = '<p class="text-muted" style="padding:16px 0">No sessions recorded yet.</p>';
+    } else {
+      container.insertAdjacentHTML('beforeend', sessions.map(renderHistorySession).join(''));
+    }
+    S.historyOffset += sessions.length;
+    if (sessions.length === HISTORY_PAGE) show(moreBtn); else hide(moreBtn);
   } catch (e) {
     container.innerHTML = `<p class="text-muted">Failed to load history: ${escapeHtml(e.message)}</p>`;
+  } finally {
+    moreBtn.disabled = false;
   }
 }
 
-function renderHistory(sessions) {
-  const container = $('history-content');
-  if (!sessions.length) {
-    container.innerHTML = '<p class="text-muted" style="padding:16px 0">No sessions recorded yet.</p>';
-    return;
-  }
-
-  container.innerHTML = sessions.map(session => {
+function renderHistorySession(session) {
     const date = session.started_at
       ? new Date(session.started_at + 'Z').toLocaleString() : '—';
     const score = `${session.correct_answers} / ${session.total_questions} correct`;
@@ -521,7 +534,6 @@ function renderHistory(sessions) {
         </div>
         <div class="history-qs">${qHtml || '<p class="text-muted">No questions recorded.</p>'}</div>
       </div>`;
-  }).join('');
 }
 
 // ── Session done ─────────────────────────────────────────────────────────────
@@ -532,8 +544,10 @@ async function endSession() {
 }
 
 function showSessionDone(msg) {
+  // At session end no new question has loaded, so questionCount already
+  // equals the number answered (unlike the live header, which is one ahead).
   $('done-summary').textContent =
-    `${msg} Score this session: ${S.correctCount}/${S.questionCount - 1} correct.`;
+    `${msg} Score this session: ${S.correctCount}/${S.questionCount} correct.`;
   S.sessionId = null;
   S.currentQuestion = null;
   setNavActive('quiz');
@@ -563,6 +577,31 @@ $('nav-quiz').addEventListener('click', () => {
 });
 
 $('nav-stats').addEventListener('click', openStats);
+
+// ── Rescan ───────────────────────────────────────────────────────────────────
+
+$('rescan-btn').addEventListener('click', rescanProject);
+
+async function rescanProject() {
+  const btn = $('rescan-btn');
+  btn.disabled = true;
+  const label = btn.textContent;
+  btn.textContent = 'Scanning...';
+  try {
+    await POST('/api/scan');
+    const status = await waitForScan();
+    S.scanComplete = true;
+    S.totalBlocks = status.total_blocks;
+    $('welcome-subtitle').textContent =
+      `${status.total_blocks} quizzable block${status.total_blocks !== 1 ? 's' : ''} found`;
+    $('btn-start').disabled = status.total_blocks === 0;
+  } catch (e) {
+    alert('Rescan failed: ' + e.message);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = label;
+  }
+}
 
 $('end-session-btn').addEventListener('click', async () => {
   if (!confirm('End session and shut down OwnYourShip?')) return;

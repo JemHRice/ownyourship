@@ -97,6 +97,20 @@ a:hover { text-decoration: underline; }
 
 #sidebar .spacer { flex: 1; }
 
+#rescan-btn {
+  margin: 0 12px 6px;
+  background: none;
+  border: 1px solid var(--border);
+  color: var(--muted);
+  font-size: 13px;
+  padding: 8px 12px;
+  cursor: pointer;
+  border-radius: var(--radius);
+  transition: border-color 0.15s, color 0.15s;
+}
+#rescan-btn:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+#rescan-btn:disabled { opacity: 0.5; cursor: default; }
+
 #end-session-btn {
   margin: 0 12px;
   background: none;

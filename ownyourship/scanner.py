@@ -189,6 +189,31 @@ _EXT_PATTERNS = {
 }
 
 
+def _block_end_line(source: str, match_start: int) -> Optional[int]:
+    """Line number of the brace that closes the block opened at match_start.
+
+    Naive brace counting — strings and comments aren't lexed, so a stray
+    brace inside one can skew the range. Good enough for snippet display.
+    Returns None for body-less declarations (e.g. `struct Foo(i32);`,
+    `func Bar(x int)` in an interface).
+    """
+    head = source[match_start : match_start + 500]
+    brace = head.find("{")
+    semi = head.find(";")
+    if brace == -1 or (0 <= semi < brace):
+        return None
+    depth = 0
+    for i in range(match_start + brace, len(source)):
+        c = source[i]
+        if c == "{":
+            depth += 1
+        elif c == "}":
+            depth -= 1
+            if depth == 0:
+                return source[:i].count("\n") + 1
+    return None
+
+
 def scan_generic_file(file_path: Path, project_path: Path) -> List[Dict]:
     ext = file_path.suffix.lower()
     patterns = _EXT_PATTERNS.get(ext)
@@ -221,7 +246,7 @@ def scan_generic_file(file_path: Path, project_path: Path) -> List[Dict]:
                 "docstring": None,
                 "decorators": [],
                 "line_start": line_num,
-                "line_end": line_num,
+                "line_end": _block_end_line(source, match.start()) or line_num,
             })
 
     return blocks

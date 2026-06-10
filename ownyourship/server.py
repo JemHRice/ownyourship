@@ -77,11 +77,13 @@ def create_app(
     async def trigger_scan():
         if _state.scan_in_progress:
             return {"status": "already_scanning"}
+        # Flip flags before the thread starts, or a client polling /api/status
+        # right after this returns can see a stale scan_complete=True.
+        _state.scan_in_progress = True
+        _state.scan_complete = False
+        _state.scan_error = None
 
         def _do_scan():
-            _state.scan_in_progress = True
-            _state.scan_complete = False
-            _state.scan_error = None
             try:
                 blocks = scanner.scan_project(_state.project_path, _state.config)
                 db.init_db(_state.project_path)
@@ -133,10 +135,9 @@ def create_app(
             raise HTTPException(404, "No quizzable blocks found")
 
         answered = db.get_session_correct_block_ids(_state.project_path, session_id)
-        all_time = db.get_performance_by_block(_state.project_path)
 
         block = quiz_mod.select_next_block(
-            all_blocks, answered, mode, _state.session_perf, all_time
+            all_blocks, answered, mode, _state.session_perf
         )
         if block is None:
             return {"finished": True, "message": "All blocks covered for this session!"}
@@ -231,8 +232,10 @@ def create_app(
     # ── History ──────────────────────────────────────────────────────────────
 
     @app.get("/api/history")
-    async def get_history():
-        return db.get_history(_state.project_path)
+    async def get_history(limit: int = 10, offset: int = 0):
+        limit = max(1, min(limit, 50))
+        offset = max(0, offset)
+        return db.get_history(_state.project_path, limit, offset)
 
     # ── Shutdown ─────────────────────────────────────────────────────────────
 

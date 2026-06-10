@@ -1,7 +1,7 @@
 # OwnYourShip (`oys`)
 
 The answer to a dilemma I faced myself - as a vibe coder/heavy user of LLMs to turn my 
-projects from ideas into reality, I find myself with code the exceeds my knowledge. To
+projects from ideas into reality, I find myself with code that exceeds my knowledge. To
 me, that is ethically grey - no-one should ship anything they can't stand and defend, or
 at the very least explain how the code blocks work together. 
 
@@ -10,11 +10,11 @@ a learning tool for vibe coders to learn what they are coding, without actually 
 their projects down. It runs locally (using your own Anthropic API key) to create questions
 around your own projects, so that you can both ship cool projects AND know how they work.
 
-It is by no means complete yet - in fact, I am using Claude to patch bugs as we go. I
-only just caught it changing it's answers mid explanation, so it isn't reliable yet
-whatsoever. However, it works to the degree that it will generate non-trivial questions
-about your own projects, and keeps a track of your progress across categories. More 
-cool features to come, and way more bugs to squish - I am quite excited about this one.
+It is still young - I am using Claude to patch bugs as we go (an early version even
+changed its answers mid-explanation; that one is long squashed). It now reliably
+generates non-trivial questions about your own projects, keeps your progress across
+sessions and rescans, and tracks coverage by file and block type. More cool features
+to come - I am quite excited about this one.
 
 Bottom line: you shouldn't own what you don't know. If you want to OwnYourShip, follow
 instructions below!
@@ -51,7 +51,7 @@ instructions below!
 ### 1. Clone or download the project
 
 ```
-git clone <https://github.com/JemHRice/ownyourship>
+git clone https://github.com/JemHRice/ownyourship
 cd ownyourship
 ```
 
@@ -120,6 +120,9 @@ oys C:\path\to\your\project
 4. Open the quiz UI in your browser
 5. Run until you press Ctrl+C or click "End Session"
 
+Changed your code mid-quiz? Click **⟳ Rescan Project** in the sidebar — your
+progress is preserved across rescans.
+
 ---
 
 ## Quiz Modes
@@ -140,6 +143,10 @@ Sessions are capped at **20 questions**. Work through multiple sessions to build
 When you've demonstrated correct knowledge of 95% of meaningful code blocks
 (functions, methods, and classes) the UI celebrates. That's the bar: you can
 stand behind this code.
+
+The Stats screen breaks coverage down by file and block type, and the Question
+History tab replays every past session — your answers, the correct ones, and
+the explanations.
 
 ---
 

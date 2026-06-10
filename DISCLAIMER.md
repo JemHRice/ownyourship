@@ -11,8 +11,8 @@ or other dealings in the software.
 
 ## API Costs — Your Responsibility
 
-ownyourship uses your **own** Anthropic API key. Every question generated and every
-free-text answer graded triggers an API call charged to **your** account.
+ownyourship uses your **own** Anthropic API key. Every question generated triggers an
+API call charged to **your** account.
 
 - The authors of this software accept **no liability** for any API costs you incur.
 - You are solely responsible for monitoring and controlling your Anthropic API spend.
@@ -22,7 +22,7 @@ free-text answer graded triggers an API call charged to **your** account.
 ## Code Sent to Anthropic
 
 When you run ownyourship on a project, snippets of that project's source code are sent
-to the **Anthropic API** to generate quiz questions and grade your answers.
+to the **Anthropic API** to generate quiz questions.
 
 - Do **not** use this tool on confidential, classified, or proprietary code without
   explicit authorisation from your organisation.

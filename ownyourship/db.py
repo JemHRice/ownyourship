@@ -77,21 +77,66 @@ def _connect(db_path: Path):
 
 
 def upsert_code_blocks(project_path: Path, blocks: List[Dict]) -> None:
+    """True upsert keyed on (file_path, block_type, block_name, parent_class).
+
+    Block IDs must survive rescans — question_results.block_id references them,
+    and the all-time coverage stats join on those IDs. A delete-and-reinsert
+    would orphan every past answer and reset coverage to zero on each launch.
+    """
     db_path = get_db_path(project_path)
     now = datetime.utcnow().isoformat()
     with _connect(db_path) as conn:
-        conn.execute("DELETE FROM code_blocks")
-        conn.executemany(
-            """INSERT INTO code_blocks
-               (file_path, block_type, block_name, parent_class, signature,
-                docstring, decorators, line_start, line_end, scanned_at)
-               VALUES (:file_path, :block_type, :block_name, :parent_class, :signature,
-                       :docstring, :decorators, :line_start, :line_end, :scanned_at)""",
-            [
-                {**b, "scanned_at": now, "decorators": json.dumps(b.get("decorators", []))}
-                for b in blocks
-            ],
-        )
+        existing_by_key: Dict[tuple, List[int]] = {}
+        for row in conn.execute(
+            "SELECT id, file_path, block_type, block_name, parent_class"
+            " FROM code_blocks ORDER BY id"
+        ):
+            key = (row["file_path"], row["block_type"], row["block_name"], row["parent_class"])
+            existing_by_key.setdefault(key, []).append(row["id"])
+
+        scanned_by_key: Dict[tuple, List[Dict]] = {}
+        for b in blocks:
+            key = (b["file_path"], b["block_type"], b["block_name"], b.get("parent_class"))
+            scanned_by_key.setdefault(key, []).append(b)
+
+        for key, scanned in scanned_by_key.items():
+            ids = existing_by_key.get(key, [])
+            # Duplicate names within a file pair up in order; extras are inserted.
+            for block_id, b in zip(ids, scanned):
+                conn.execute(
+                    """UPDATE code_blocks
+                       SET signature=?, docstring=?, decorators=?,
+                           line_start=?, line_end=?, scanned_at=?
+                       WHERE id=?""",
+                    (
+                        b.get("signature"), b.get("docstring"),
+                        json.dumps(b.get("decorators", [])),
+                        b["line_start"], b["line_end"], now, block_id,
+                    ),
+                )
+            for b in scanned[len(ids):]:
+                conn.execute(
+                    """INSERT INTO code_blocks
+                       (file_path, block_type, block_name, parent_class, signature,
+                        docstring, decorators, line_start, line_end, scanned_at)
+                       VALUES (?,?,?,?,?,?,?,?,?,?)""",
+                    (
+                        b["file_path"], b["block_type"], b["block_name"],
+                        b.get("parent_class"), b.get("signature"), b.get("docstring"),
+                        json.dumps(b.get("decorators", [])),
+                        b["line_start"], b["line_end"], now,
+                    ),
+                )
+
+        stale_ids = [
+            block_id
+            for key, ids in existing_by_key.items()
+            for block_id in ids[len(scanned_by_key.get(key, [])):]
+        ]
+        if stale_ids:
+            conn.executemany(
+                "DELETE FROM code_blocks WHERE id=?", [(i,) for i in stale_ids]
+            )
 
 
 def get_all_blocks(project_path: Path) -> List[Dict]:
@@ -168,22 +213,9 @@ def get_session_correct_block_ids(project_path: Path, session_id: int) -> set:
     return {r["block_id"] for r in rows}
 
 
-def get_performance_by_block(project_path: Path) -> Dict[int, Dict]:
-    """All-time per-block performance across all sessions."""
-    db_path = get_db_path(project_path)
-    with _connect(db_path) as conn:
-        rows = conn.execute("""
-            SELECT block_id,
-                   COUNT(*)        AS total,
-                   SUM(is_correct) AS correct,
-                   AVG(score)      AS avg_score
-            FROM question_results
-            GROUP BY block_id
-        """).fetchall()
-    return {r["block_id"]: dict(r) for r in rows}
-
-
-def get_history(project_path: Path, session_limit: int = 20) -> List[Dict]:
+def get_history(
+    project_path: Path, session_limit: int = 10, offset: int = 0
+) -> List[Dict]:
     db_path = get_db_path(project_path)
     with _connect(db_path) as conn:
         sessions = conn.execute("""
@@ -195,8 +227,8 @@ def get_history(project_path: Path, session_limit: int = 20) -> List[Dict]:
             LEFT JOIN question_results qr ON s.id = qr.session_id
             GROUP BY s.id
             ORDER BY s.started_at DESC
-            LIMIT ?
-        """, (session_limit,)).fetchall()
+            LIMIT ? OFFSET ?
+        """, (session_limit, offset)).fetchall()
 
         result = []
         for session in sessions:
