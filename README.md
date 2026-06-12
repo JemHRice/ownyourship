@@ -19,7 +19,7 @@ instructions below!
 
 ---
 
-## Security & Cost — Read This First
+## Security & Cost - Read This First
 
 > **Your code is sent to Anthropic.**  
 > Snippets from scanned projects are transmitted to the Anthropic API to generate
@@ -28,7 +28,7 @@ instructions below!
 > See [DISCLAIMER.md](DISCLAIMER.md) for full terms.
 
 > **You pay for every API call.**  
-> This tool uses **your own** Anthropic API key — the author pays nothing and receives
+> This tool uses **your own** Anthropic API key - the author pays nothing and receives
 > nothing from your usage. Set a hard monthly spend limit **before** you start:
 > https://console.anthropic.com/settings/limits
 
@@ -40,7 +40,7 @@ instructions below!
 ## Requirements
 
 - Python 3.10 or later
-- An Anthropic API key — get one at https://console.anthropic.com/keys
+- An Anthropic API key - get one at https://console.anthropic.com/keys
 
 ---
 
@@ -77,7 +77,7 @@ This installs all dependencies and makes the `oys` command available in your ven
 
 ### 5. Set your API key
 
-**Option A — Global (recommended): works across all projects**
+**Option A - Global (recommended): works across all projects**
 
 Create the file `%USERPROFILE%\.oys\.env` (e.g. `C:\Users\YourName\.oys\.env`):
 
@@ -85,7 +85,7 @@ Create the file `%USERPROFILE%\.oys\.env` (e.g. `C:\Users\YourName\.oys\.env`):
 ANTHROPIC_API_KEY=sk-ant-...your-key-here...
 ```
 
-**Option B — Per project**
+**Option B - Per project**
 
 Create a `.env` file in the project directory you want to quiz on:
 
@@ -93,7 +93,7 @@ Create a `.env` file in the project directory you want to quiz on:
 ANTHROPIC_API_KEY=sk-ant-...your-key-here...
 ```
 
-The `.env` file is gitignored — never commit your key.
+The `.env` file is gitignored - never commit your key.
 
 ---
 
@@ -118,7 +118,7 @@ oys C:\path\to\your\project
 4. Open the quiz UI in your browser
 5. Run until you press Ctrl+C or click "End Session"
 
-Changed your code mid-quiz? Click **⟳ Rescan Project** in the sidebar — your
+Changed your code mid-quiz? Click **⟳ Rescan Project** in the sidebar - your
 progress is preserved across rescans.
 
 ---
@@ -130,9 +130,9 @@ All modes use multiple choice questions. Each question shows the relevant code s
 | Mode | Description |
 |------|-------------|
 | **Easy** | Straightforward questions. Good for a first pass through the codebase. |
-| **Intermediate** | Deeper questions — interactions between components, non-obvious behaviours. |
+| **Intermediate** | Deeper questions - interactions between components, non-obvious behaviours. |
 | **Hard** | Challenging questions focused on edge cases, subtle behaviours, and precise roles. |
-| **Tailored** | Adapts in real time — focuses on your weak spots, skips what you know. |
+| **Tailored** | Adapts in real time - focuses on your weak spots, skips what you know. |
 
 Sessions are capped at **20 questions**. Work through multiple sessions to build toward 95% coverage.
 
@@ -143,7 +143,7 @@ When you've demonstrated correct knowledge of 95% of meaningful code blocks
 stand behind this code.
 
 The Stats screen breaks coverage down by file and block type, and the Question
-History tab replays every past session — your answers, the correct ones, and
+History tab replays every past session - your answers, the correct ones, and
 the explanations.
 
 ---
@@ -168,7 +168,7 @@ Edit this file to control what gets scanned. Changes take effect on the next `oy
 ## Progress data
 
 All progress is stored in `.oys/progress.db` (SQLite) inside the target project.
-Both `.oys/` and `.env` are automatically gitignored — neither will be committed.
+Both `.oys/` and `.env` are automatically gitignored - neither will be committed.
 
 To reset progress: delete `.oys/progress.db`.
 
@@ -176,11 +176,11 @@ To reset progress: delete `.oys/progress.db`.
 
 ## Cost estimates
 
-`oys` uses **Claude Haiku** for question generation only — all answer grading is done locally.
+`oys` uses **Claude Haiku** for question generation only - all answer grading is done locally.
 Haiku is the most cost-efficient Claude model. Typical session costs:
 
-- 20-question session:        ~$0.02–$0.06
-- Full project (100 questions): ~$0.10–$0.25
+- 20-question session:        ~$0.02-$0.06
+- Full project (100 questions): ~$0.10-$0.25
 
 These are rough estimates. The UI shows a running cost counter so you always know
 where you stand. A configurable warning triggers at $0.50 by default.
@@ -192,7 +192,7 @@ where you stand. A configurable warning triggers at $0.50 by default.
 ## Supported languages
 
 Python (AST-based, most accurate), JavaScript/TypeScript, Java/Kotlin, Go, Rust.
-Additional languages can be added by editing the scanner — PRs welcome.
+Additional languages can be added by editing the scanner - PRs welcome.
 
 ---
 
@@ -201,7 +201,7 @@ Additional languages can be added by editing the scanner — PRs welcome.
 OwnYourShip is under active development. Where it stands and where it's going:
 
 - **Rapid iteration.** Releases ship frequently and bugs are squashed as they
-  surface (an early version once changed its answers mid-explanation — long
+  surface (an early version once changed its answers mid-explanation - long
   fixed). If you hit one, please open an issue.
 - **Deeper language scanning.** Python uses full AST parsing today; JS/TS,
   Java/Kotlin, Go, and Rust use lighter pattern-based scanning. Upgrading these
@@ -213,10 +213,10 @@ OwnYourShip is under active development. Where it stands and where it's going:
 
 ## Security notes
 
-- The server binds to `127.0.0.1` only — it is never accessible from the network.
+- The server binds to `127.0.0.1` only - it is never accessible from the network.
 - Your API key is read from `.env` at runtime and never logged, printed, or committed.
 - `.oys/` and `.env` are added to your project's `.gitignore` automatically.
 - Default exclusions cover `.env*`, `*.key`, `*.pem`, `*secret*`, `*credential*`,
-  `*password*`, `*token*` — these files are never scanned or sent to Anthropic.
+  `*password*`, `*token*` - these files are never scanned or sent to Anthropic.
 - Code snippets are sent to Anthropic as part of API calls. Anthropic's data handling
   is governed by their own privacy policy and terms of service.
