@@ -10,11 +10,9 @@ a learning tool for vibe coders to learn what they are coding, without actually 
 their projects down. It runs locally (using your own Anthropic API key) to create questions
 around your own projects, so that you can both ship cool projects AND know how they work.
 
-It is still young - I am using Claude to patch bugs as we go (an early version even
-changed its answers mid-explanation; that one is long squashed). It now reliably
-generates non-trivial questions about your own projects, keeps your progress across
-sessions and rescans, and tracks coverage by file and block type. More cool features
-to come - I am quite excited about this one.
+It generates non-trivial questions about your own projects, keeps your progress
+across sessions and rescans, and tracks coverage by file and block type. See
+[Known Limitations & Roadmap](#known-limitations--roadmap) for where it's heading.
 
 Bottom line: you shouldn't own what you don't know. If you want to OwnYourShip, follow
 instructions below!
@@ -195,6 +193,21 @@ where you stand. A configurable warning triggers at $0.50 by default.
 
 Python (AST-based, most accurate), JavaScript/TypeScript, Java/Kotlin, Go, Rust.
 Additional languages can be added by editing the scanner — PRs welcome.
+
+---
+
+## Known Limitations & Roadmap
+
+OwnYourShip is under active development. Where it stands and where it's going:
+
+- **Rapid iteration.** Releases ship frequently and bugs are squashed as they
+  surface (an early version once changed its answers mid-explanation — long
+  fixed). If you hit one, please open an issue.
+- **Deeper language scanning.** Python uses full AST parsing today; JS/TS,
+  Java/Kotlin, Go, and Rust use lighter pattern-based scanning. Upgrading these
+  to proper parsers is on the roadmap.
+- **More quiz features planned.** Question quality tuning, richer coverage
+  analytics, and new quiz modes are next.
 
 ---
 
