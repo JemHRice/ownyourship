@@ -206,6 +206,10 @@ OwnYourShip is under active development. Where it stands and where it's going:
 - **Deeper language scanning.** Python uses full AST parsing today; JS/TS,
   Java/Kotlin, Go, and Rust use lighter pattern-based scanning. Upgrading these
   to proper parsers is on the roadmap.
+- **Some default extensions scan empty.** The default config also matches
+  `.rb`, `.php`, `.cs`, `.cpp`, `.c`, `.h`, and `.swift` files, but no scanner
+  patterns exist for them yet - projects in those languages will scan without
+  errors but yield nothing to quiz on. Pattern support for these is planned.
 - **More quiz features planned.** Question quality tuning, richer coverage
   analytics, and new quiz modes are next.
 
