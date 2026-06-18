@@ -1,12 +1,14 @@
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 DEFAULT_CONFIG: dict = {
+    # Only extensions the scanner can actually parse (Python AST + the regex
+    # languages in scanner._EXT_PATTERNS). Adding others here without matching
+    # scanner patterns would scan them to zero blocks — see README.
     "included_extensions": [
         ".py", ".js", ".ts", ".jsx", ".tsx",
-        ".java", ".go", ".rs", ".rb", ".php",
-        ".cs", ".cpp", ".c", ".h", ".kt", ".swift",
+        ".java", ".kt", ".go", ".rs",
     ],
     "excluded_dirs": [
         "venv", ".venv", "env",
@@ -61,7 +63,9 @@ def save_config(project_path: Path, config: dict) -> None:
 def acknowledge_disclaimer(project_path: Path) -> None:
     config = load_config(project_path)
     config["disclaimer_acknowledged"] = True
-    config["disclaimer_acknowledged_at"] = datetime.utcnow().isoformat()
+    config["disclaimer_acknowledged_at"] = (
+        datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
+    )
     save_config(project_path, config)
 
 

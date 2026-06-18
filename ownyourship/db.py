@@ -1,9 +1,19 @@
 import json
 import sqlite3
 from contextlib import contextmanager
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, List, Optional
+
+
+def _utcnow_iso() -> str:
+    """Current UTC time as a naive ISO string.
+
+    Non-deprecated replacement for datetime.utcnow() that keeps the same
+    on-disk format as previously stored timestamps, so ordering stays
+    consistent across rows written before and after this change.
+    """
+    return datetime.now(timezone.utc).replace(tzinfo=None).isoformat()
 
 
 def get_db_path(project_path: Path) -> Path:
@@ -84,7 +94,7 @@ def upsert_code_blocks(project_path: Path, blocks: List[Dict]) -> None:
     would orphan every past answer and reset coverage to zero on each launch.
     """
     db_path = get_db_path(project_path)
-    now = datetime.utcnow().isoformat()
+    now = _utcnow_iso()
     with _connect(db_path) as conn:
         existing_by_key: Dict[tuple, List[int]] = {}
         for row in conn.execute(
@@ -150,7 +160,7 @@ def get_all_blocks(project_path: Path) -> List[Dict]:
 
 def create_session(project_path: Path, mode: str) -> int:
     db_path = get_db_path(project_path)
-    now = datetime.utcnow().isoformat()
+    now = _utcnow_iso()
     with _connect(db_path) as conn:
         cur = conn.execute(
             "INSERT INTO sessions (mode, started_at) VALUES (?, ?)", (mode, now)
@@ -162,7 +172,7 @@ def end_session(
     project_path: Path, session_id: int, tokens_used: int, cost_usd: float
 ) -> None:
     db_path = get_db_path(project_path)
-    now = datetime.utcnow().isoformat()
+    now = _utcnow_iso()
     with _connect(db_path) as conn:
         conn.execute(
             "UPDATE sessions SET ended_at=?, tokens_used=?, cost_usd=? WHERE id=?",
@@ -185,7 +195,7 @@ def record_answer(
     explanation: str,
 ) -> int:
     db_path = get_db_path(project_path)
-    now = datetime.utcnow().isoformat()
+    now = _utcnow_iso()
     with _connect(db_path) as conn:
         cur = conn.execute(
             """INSERT INTO question_results

@@ -1,5 +1,7 @@
 # OwnYourShip (`oys`)
 
+[![CI](https://github.com/JemHRice/ownyourship/actions/workflows/ci.yml/badge.svg)](https://github.com/JemHRice/ownyourship/actions/workflows/ci.yml)
+
 The answer to a dilemma I faced myself - as a vibe coder/heavy user of LLMs to turn my 
 projects from ideas into reality, I find myself with code that exceeds my knowledge. To
 me, that is ethically grey - no-one should ship anything they can't stand and defend, or
@@ -206,6 +208,11 @@ OwnYourShip is under active development. Where it stands and where it's going:
 - **Deeper language scanning.** Python uses full AST parsing today; JS/TS,
   Java/Kotlin, Go, and Rust use lighter pattern-based scanning. Upgrading these
   to proper parsers is on the roadmap.
+- **Adding a language takes two steps.** The default config only includes
+  extensions the scanner can actually parse. To cover a new language (Ruby,
+  PHP, C/C++, C#, Swift, etc.) you must both add its extension to
+  `included_extensions` and add matching patterns to `scanner._EXT_PATTERNS` -
+  an extension with no scanner patterns scans to zero blocks. PRs welcome.
 - **More quiz features planned.** Question quality tuning, richer coverage
   analytics, and new quiz modes are next.
 
@@ -220,3 +227,21 @@ OwnYourShip is under active development. Where it stands and where it's going:
   `*password*`, `*token*` - these files are never scanned or sent to Anthropic.
 - Code snippets are sent to Anthropic as part of API calls. Anthropic's data handling
   is governed by their own privacy policy and terms of service.
+
+---
+
+## Development
+
+Install the test dependencies and run the suite:
+
+```bash
+pip install -e ".[test]"
+pytest
+```
+
+The tests cover the scanner (Python AST + the regex languages), the SQLite
+layer (including the rescan ID-preservation invariant), question parsing and
+MC-option shuffling, the grader, config loading, and the HTTP endpoints. No
+test contacts the Anthropic API - the quiz code takes an injected client and
+the suite passes a fake, so `pytest` needs no API key and makes no network
+calls.

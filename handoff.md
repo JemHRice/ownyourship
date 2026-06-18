@@ -6,8 +6,8 @@
 
 ## Current State
 
-**Date of last update:** 2026-06-10  
-**Status:** Feature-complete v1 — tested and working end-to-end
+**Date of last update:** 2026-06-18  
+**Status:** Feature-complete v1 with an automated test suite (57 tests, all passing)
 
 ---
 
@@ -78,12 +78,51 @@ Full initial implementation. See git history or original session notes for detai
 
 ---
 
+## What Was Changed (Session 4 — Verification, Fixes & Test Suite, 2026-06-18)
+
+### Roadmap claim verified
+- Confirmed the README's "Python = full AST, others = pattern-based" claim against
+  `scanner.py`. Accurate as written. While checking, found that the *default* config
+  included extensions with no scanner patterns (`.rb/.php/.cs/.cpp/.c/.h/.swift`),
+  which would scan to zero blocks silently.
+
+### Fixes
+- **Dead free-text prompt branch removed** — `quiz._build_prompt` carried an unreachable
+  `free_text` JSON-format branch (free text was removed in Session 2); `q_type` was always
+  `multiple_choice`. Dropped the branch and the `q_type` param.
+- **`datetime.utcnow()` deprecation** — Python 3.13 deprecates it. `db.py` now uses a
+  `_utcnow_iso()` helper (`datetime.now(timezone.utc).replace(tzinfo=None)`) that keeps the
+  existing naive-ISO on-disk format so timestamp ordering stays consistent; `config.py`
+  uses the same call inline.
+- **Empty-scan limitation fixed at source** — trimmed `DEFAULT_CONFIG["included_extensions"]`
+  to only `.py` + the languages with scanner patterns (`.js/.ts/.jsx/.tsx/.java/.kt/.go/.rs`).
+  Existing `.oys/config.json` files keep their stored lists (stored wins over defaults), so
+  this only affects new projects. README "Known Limitations" recast accordingly.
+
+### Test suite added (the big one)
+- New `tests/` package + `pytest>=8` under `[project.optional-dependencies] test` in
+  pyproject, with `[tool.pytest.ini_options]`. **57 tests, all passing.**
+- Coverage: `test_scanner.py` (AST + regex langs, exclusions, brace matching, project scan),
+  `test_db.py` (the rescan ID-preservation invariant, insert/delete/dup pairing, stats math,
+  history pagination), `test_quiz.py` (cost, response parsing, MC shuffle invariant, block
+  selection incl. tailored, async `generate_question` via a fake client), `test_grader.py`,
+  `test_config.py` (incl. a guard that every default extension has scanner support),
+  `test_server.py` (TestClient endpoints; `generate_question` mocked).
+- **No network/API key needed** — quiz code takes an injected client; `conftest.FakeAnthropic`
+  supplies canned responses/errors. `conftest.server_app` resets the module-level `_state`
+  singleton per test (that singleton is a known design smell the tests surface).
+- One benign warning: Starlette deprecates using `httpx` with its TestClient (upstream env, not our code).
+
+---
+
 ## Next Steps
 
-Backlog is clear. Candidates for a future session:
+Candidates for a future session:
 1. Browser smoke test of the Session 3 UI changes (see known issue 3)
 2. README screenshots + `pipx`/PyPI packaging
 3. Content-hash block identity if rename-history-loss starts to hurt
+4. Refactor `server._state` off the module-level singleton (DI) so server tests
+   needn't reset shared state — would also allow running the app twice in-process
 
 ---
 
