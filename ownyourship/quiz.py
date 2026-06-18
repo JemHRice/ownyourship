@@ -68,7 +68,7 @@ MULTIPLE CHOICE RULES (strictly enforced):
 """
 
 
-def _build_prompt(block: Dict, code_context: str, mode: str, q_type: str) -> str:
+def _build_prompt(block: Dict, code_context: str, mode: str) -> str:
     block_desc = f"{block['block_type']} `{block['block_name']}`"
     if block.get("parent_class"):
         block_desc = f"method `{block['block_name']}` in class `{block['parent_class']}`"
@@ -76,8 +76,7 @@ def _build_prompt(block: Dict, code_context: str, mode: str, q_type: str) -> str
     docstring_line = f"\nDOCSTRING: {block['docstring']}" if block.get("docstring") else ""
     mode_instr = _MODE_INSTRUCTIONS.get(mode, _MODE_INSTRUCTIONS["intermediate"])
 
-    if q_type == "multiple_choice":
-        format_block = f"""
+    format_block = f"""
 {_MC_RULES}
 Return ONLY valid JSON — no prose, no markdown fences:
 {{
@@ -87,16 +86,6 @@ Return ONLY valid JSON — no prose, no markdown fences:
   "correct_answer": "A",
   "explanation": "Brief explanation of the correct answer"
 }}
-"""
-    else:
-        format_block = """
-Return ONLY valid JSON — no prose, no markdown fences:
-{
-  "question": "Explain in plain English: ...",
-  "type": "free_text",
-  "correct_answer": "Model answer covering the key points",
-  "explanation": "The key concepts a correct answer must include"
-}
 """
 
     return f"""You are generating a quiz question to test whether a developer understands their own code.
@@ -111,7 +100,7 @@ CODE (lines marked > are the target block):
 ```
 
 TASK: {mode_instr}
-QUESTION TYPE: {q_type.replace('_', ' ')}
+QUESTION TYPE: multiple choice
 
 RULES:
 - Test understanding of WHAT this code does and WHY — not syntax knowledge
@@ -226,9 +215,7 @@ async def generate_question(
     if not code_context:
         return None, 0, 0
 
-    q_type = "multiple_choice"
-
-    prompt = _build_prompt(block, code_context, mode, q_type)
+    prompt = _build_prompt(block, code_context, mode)
 
     try:
         response = await client.messages.create(
