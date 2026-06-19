@@ -1,0 +1,3 @@
+# Normalize line endings: store and check out text files as LF on every
+# platform. Keeps Windows checkouts from producing CRLF diff noise.
+* text=auto eol=lf
