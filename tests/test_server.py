@@ -182,3 +182,30 @@ def test_question_cap_is_per_session(server_client, monkeypatch):
     ).json()
     assert not body.get("finished")
     assert "question" in body
+
+
+# ── Session validation (RED — implementation pending) ─────────────────────────
+
+UNKNOWN_SESSION_ID = 99999
+
+
+def test_question_rejects_unknown_session(server_client, monkeypatch):
+    """Requesting a question for a session that was never started must 404."""
+    _mock_question_generation(monkeypatch)
+    _scan_and_wait(server_client)
+    resp = server_client.get(
+        "/api/question", params={"session_id": UNKNOWN_SESSION_ID, "mode": "easy"}
+    )
+    assert resp.status_code == 404
+
+
+def test_answer_rejects_unknown_session(server_client):
+    """Submitting an answer against a session that was never started must 404,
+    before anything is recorded."""
+    _scan_and_wait(server_client)
+    resp = server_client.post("/api/answer", json={
+        "session_id": UNKNOWN_SESSION_ID, "block_id": 1, "mode": "easy",
+        "question_text": "q?", "question_type": "multiple_choice",
+        "user_answer": "A", "correct_answer": "A", "explanation": "exp",
+    })
+    assert resp.status_code == 404
