@@ -97,3 +97,88 @@ def test_config_strips_disclaimer_fields(server_client):
     assert "disclaimer_acknowledged" not in body
     assert "disclaimer_acknowledged_at" not in body
     assert "included_extensions" in body
+
+
+# ── 20-question session cap (RED — implementation pending) ────────────────────
+
+SESSION_QUESTION_CAP = 20
+
+
+def _mock_question_generation(monkeypatch):
+    """Make /api/question return a canned MC question without touching the API."""
+    from ownyourship import quiz
+
+    async def fake_generate(block, *args, **kwargs):
+        qdata = {
+            "question": "what does foo do?",
+            "type": "multiple_choice",
+            "options": ["A: a", "B: b", "C: c", "D: d"],
+            "correct_answer": "A",
+            "explanation": "because",
+            "block_id": block["id"],
+        }
+        return qdata, 5, 7
+
+    monkeypatch.setattr(quiz, "generate_question", fake_generate)
+
+
+def _answer_wrong(client, question_body, session_id):
+    """Submit a deliberately wrong answer.
+
+    Only correctly-answered blocks leave the pool, so answering wrong keeps the
+    block pool full — the session can then only end because of the cap, never
+    because we ran out of blocks.
+    """
+    return client.post("/api/answer", json={
+        "session_id": session_id,
+        "block_id": question_body["block_id"],
+        "mode": "easy",
+        "question_text": question_body.get("question", "q"),
+        "question_type": "multiple_choice",
+        "user_answer": "B",                                   # mock's correct is "A"
+        "correct_answer": question_body["correct_answer"],
+        "explanation": "",
+    })
+
+
+def _start_session(client):
+    return client.post("/api/session/start", json={"mode": "easy"}).json()["session_id"]
+
+
+def test_session_caps_at_20_questions(server_client, monkeypatch):
+    _mock_question_generation(monkeypatch)
+    _scan_and_wait(server_client)
+    sid = _start_session(server_client)
+
+    for n in range(SESSION_QUESTION_CAP):
+        body = server_client.get(
+            "/api/question", params={"session_id": sid, "mode": "easy"}
+        ).json()
+        assert not body.get("finished"), f"session ended early at question {n + 1}"
+        _answer_wrong(server_client, body, sid)
+
+    # The 21st request must report the session complete, not serve another question.
+    body = server_client.get(
+        "/api/question", params={"session_id": sid, "mode": "easy"}
+    ).json()
+    assert body.get("finished") is True
+
+
+def test_question_cap_is_per_session(server_client, monkeypatch):
+    """The cap counts this session's questions only — a fresh session starts over."""
+    _mock_question_generation(monkeypatch)
+    _scan_and_wait(server_client)
+
+    sid1 = _start_session(server_client)
+    for _ in range(SESSION_QUESTION_CAP):
+        body = server_client.get(
+            "/api/question", params={"session_id": sid1, "mode": "easy"}
+        ).json()
+        _answer_wrong(server_client, body, sid1)
+
+    sid2 = _start_session(server_client)
+    body = server_client.get(
+        "/api/question", params={"session_id": sid2, "mode": "easy"}
+    ).json()
+    assert not body.get("finished")
+    assert "question" in body
