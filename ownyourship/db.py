@@ -212,6 +212,21 @@ def record_answer(
         return cur.lastrowid
 
 
+def count_session_answers(project_path: Path, session_id: int) -> int:
+    """Number of questions answered in a session (one row per answered question).
+
+    Used to enforce the per-session question cap. `submitAnswer` fires once per
+    question, so this equals the number of questions served in the session.
+    """
+    db_path = get_db_path(project_path)
+    with _connect(db_path) as conn:
+        row = conn.execute(
+            "SELECT COUNT(*) FROM question_results WHERE session_id=?",
+            (session_id,),
+        ).fetchone()
+    return row[0]
+
+
 def get_session_correct_block_ids(project_path: Path, session_id: int) -> set:
     """Block IDs answered correctly at least once in this session — never repeated."""
     db_path = get_db_path(project_path)

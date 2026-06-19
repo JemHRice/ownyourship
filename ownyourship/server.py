@@ -16,6 +16,10 @@ from . import scanner
 
 STATIC_DIR = Path(__file__).parent / "static"
 
+# A session serves at most this many questions; the frontend caps loads at the
+# same number, but the server is the authority (see /api/question).
+MAX_QUESTIONS_PER_SESSION = 20
+
 
 class _State:
     project_path: Optional[Path] = None
@@ -129,6 +133,12 @@ def create_app(
     async def get_question(session_id: int, mode: str):
         if not _state.scan_complete:
             raise HTTPException(400, "Scan not complete")
+
+        if db.count_session_answers(_state.project_path, session_id) >= MAX_QUESTIONS_PER_SESSION:
+            return {
+                "finished": True,
+                "message": f"{MAX_QUESTIONS_PER_SESSION}-question session complete!",
+            }
 
         all_blocks = scanner.get_meaningful_blocks(db.get_all_blocks(_state.project_path))
         if not all_blocks:
