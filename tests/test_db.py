@@ -143,3 +143,20 @@ def test_record_answer_rejects_orphan_session(project, block_factory):
     with pytest.raises(sqlite3.IntegrityError):
         db.record_answer(project, 99999, block_id, "easy", "q", "multiple_choice",
                          "A", "A", True, 1.0, "", "")
+
+
+def test_rescan_removing_answered_block_does_not_crash(project, block_factory):
+    """With FKs enforced, dropping an answered block on rescan must still work:
+    its answer history is removed alongside it, not left dangling."""
+    db.init_db(project)
+    db.upsert_code_blocks(project, [block_factory(block_name="gone"),
+                                    block_factory(block_name="stays")])
+    gone_id = _id_of(project, "gone")
+    sid = db.create_session(project, "easy")
+    db.record_answer(project, sid, gone_id, "easy", "q", "multiple_choice",
+                     "A", "A", True, 1.0, "", "")
+
+    db.upsert_code_blocks(project, [block_factory(block_name="stays")])  # "gone" removed
+
+    assert {r["block_name"] for r in db.get_all_blocks(project)} == {"stays"}
+    assert db.count_session_answers(project, sid) == 0  # orphaned answer cleared
