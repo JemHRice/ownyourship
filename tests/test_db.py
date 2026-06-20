@@ -160,3 +160,13 @@ def test_rescan_removing_answered_block_does_not_crash(project, block_factory):
 
     assert {r["block_name"] for r in db.get_all_blocks(project)} == {"stays"}
     assert db.count_session_answers(project, sid) == 0  # orphaned answer cleared
+
+
+def test_end_session_persists_cost_and_ended_at(project):
+    db.init_db(project)
+    sid = db.create_session(project, "easy")
+    db.end_session(project, sid, tokens_used=300, cost_usd=0.0123)
+
+    sess = next(s for s in db.get_history(project, session_limit=5, offset=0) if s["id"] == sid)
+    assert sess["cost_usd"] == 0.0123
+    assert sess["ended_at"] is not None

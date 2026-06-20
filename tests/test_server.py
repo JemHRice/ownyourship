@@ -209,3 +209,83 @@ def test_answer_rejects_unknown_session(server_client):
         "user_answer": "A", "correct_answer": "A", "explanation": "exp",
     })
     assert resp.status_code == 404
+
+
+# ── Stats, session end, and the block-exhaustion finish ───────────────────────
+
+def _answer_correct(client, question_body, session_id):
+    return client.post("/api/answer", json={
+        "session_id": session_id,
+        "block_id": question_body["block_id"],
+        "mode": "easy",
+        "question_text": question_body.get("question", "q"),
+        "question_type": "multiple_choice",
+        "user_answer": "A",                                   # mock's correct is "A"
+        "correct_answer": question_body["correct_answer"],
+        "explanation": "",
+    })
+
+
+def test_stats_endpoint_before_scan(server_client):
+    body = server_client.get("/api/stats").json()
+    assert "error" in body
+
+
+def test_stats_endpoint_reports_coverage_and_breakdowns(server_client, monkeypatch):
+    _mock_question_generation(monkeypatch)
+    _scan_and_wait(server_client)
+    sid = _start_session(server_client)
+    q = server_client.get("/api/question", params={"session_id": sid, "mode": "easy"}).json()
+    _answer_correct(server_client, q, sid)
+
+    stats = server_client.get("/api/stats").json()
+    assert stats["total_blocks"] >= 1
+    assert stats["correct_blocks"] >= 1
+    assert 0 <= stats["coverage_pct"] <= 100
+    assert "has_95_achievement" in stats
+
+    assert stats["file_stats"]
+    assert {"file_path", "total_blocks", "correct_blocks", "attempts", "avg_score"} <= set(stats["file_stats"][0])
+    assert stats["concept_stats"]
+    assert {"block_type", "total_blocks", "correct_blocks", "attempts", "avg_score"} <= set(stats["concept_stats"][0])
+
+
+def test_session_end_persists_cost(server_client, monkeypatch):
+    from ownyourship import quiz
+
+    async def fake_generate(block, *args, **kwargs):
+        qdata = {
+            "question": "q", "type": "multiple_choice",
+            "options": ["A: a", "B: b", "C: c", "D: d"],
+            "correct_answer": "A", "explanation": "e", "block_id": block["id"],
+        }
+        return qdata, 1_000_000, 1_000_000  # $1 input + $5 output = $6
+
+    monkeypatch.setattr(quiz, "generate_question", fake_generate)
+    _scan_and_wait(server_client)
+    sid = _start_session(server_client)
+    server_client.get("/api/question", params={"session_id": sid, "mode": "easy"})
+
+    resp = server_client.post("/api/session/end", json={"session_id": sid})
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "ended"
+    assert resp.json()["cost_usd"] == 6.0
+
+    sess = next(s for s in server_client.get("/api/stats").json()["sessions"] if s["id"] == sid)
+    assert sess["ended_at"] is not None
+    assert sess["cost_usd"] == 6.0
+
+
+def test_question_finished_when_all_blocks_covered(server_client, monkeypatch):
+    """Distinct from the cap: once every block is answered correctly, the pool
+    is empty and /api/question reports the all-covered finish."""
+    _mock_question_generation(monkeypatch)
+    _scan_and_wait(server_client)
+    sid = _start_session(server_client)
+
+    q = server_client.get("/api/question", params={"session_id": sid, "mode": "easy"}).json()
+    _answer_correct(server_client, q, sid)  # the only block (foo) leaves the pool
+
+    body = server_client.get("/api/question", params={"session_id": sid, "mode": "easy"}).json()
+    assert body.get("finished") is True
+    assert "covered" in body.get("message", "").lower()

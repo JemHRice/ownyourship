@@ -169,3 +169,28 @@ def test_get_meaningful_blocks_drops_constants(block_factory):
     ]
     kept = {b["block_name"] for b in scanner.get_meaningful_blocks(blocks)}
     assert kept == {"f", "C"}
+
+
+# ── Java / Kotlin patterns (README claims both as supported) ──────────────────
+
+def test_java_patterns(tmp_path):
+    src = (
+        "public class Service {\n"
+        "    public void run() {}\n"
+        "    private int compute(int x) { return x; }\n"
+        "}\n"
+        "interface Repo {}\n"
+    )
+    names = {(b["block_name"], b["block_type"]) for b in _scan_generic(tmp_path, "Service.java", src)}
+    assert ("Service", "class") in names
+    assert ("Repo", "class") in names
+    assert ("run", "function") in names
+    assert ("compute", "function") in names
+
+
+def test_kotlin_uses_java_patterns(tmp_path):
+    # .kt is dispatched to the same pattern set as .java.
+    src = "class Widget {}\ninterface Clickable {}\n"
+    names = {(b["block_name"], b["block_type"]) for b in _scan_generic(tmp_path, "Widget.kt", src)}
+    assert ("Widget", "class") in names
+    assert ("Clickable", "class") in names
