@@ -134,6 +134,9 @@ def create_app(
         if not _state.scan_complete:
             raise HTTPException(400, "Scan not complete")
 
+        if not db.session_exists(_state.project_path, session_id):
+            raise HTTPException(404, "Unknown session")
+
         if db.count_session_answers(_state.project_path, session_id) >= MAX_QUESTIONS_PER_SESSION:
             return {
                 "finished": True,
@@ -192,6 +195,9 @@ def create_app(
 
     @app.post("/api/answer")
     async def submit_answer(req: AnswerReq):
+        if not db.session_exists(_state.project_path, req.session_id):
+            raise HTTPException(404, "Unknown session")
+
         user_answer = req.user_answer[:500]
         is_correct, score, feedback = grader.grade_multiple_choice(
             user_answer, req.correct_answer

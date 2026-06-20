@@ -1,3 +1,7 @@
+import sqlite3
+
+import pytest
+
 from ownyourship import db
 
 
@@ -118,3 +122,41 @@ def test_history_pagination_and_nesting(project, block_factory):
     assert len(page2) == 1
     assert page1[0]["questions"][0]["question_text"] == "what?"
     assert page1[0]["total_questions"] == 1
+
+
+# ── Foreign-key enforcement (RED — implementation pending) ────────────────────
+
+def test_record_answer_rejects_orphan_block(project):
+    """An answer referencing a non-existent block must be rejected, not stored."""
+    db.init_db(project)
+    sid = db.create_session(project, "easy")
+    with pytest.raises(sqlite3.IntegrityError):
+        db.record_answer(project, sid, 99999, "easy", "q", "multiple_choice",
+                         "A", "A", True, 1.0, "", "")
+
+
+def test_record_answer_rejects_orphan_session(project, block_factory):
+    """An answer referencing a non-existent session must be rejected, not stored."""
+    db.init_db(project)
+    db.upsert_code_blocks(project, [block_factory(block_name="a")])
+    block_id = _id_of(project, "a")
+    with pytest.raises(sqlite3.IntegrityError):
+        db.record_answer(project, 99999, block_id, "easy", "q", "multiple_choice",
+                         "A", "A", True, 1.0, "", "")
+
+
+def test_rescan_removing_answered_block_does_not_crash(project, block_factory):
+    """With FKs enforced, dropping an answered block on rescan must still work:
+    its answer history is removed alongside it, not left dangling."""
+    db.init_db(project)
+    db.upsert_code_blocks(project, [block_factory(block_name="gone"),
+                                    block_factory(block_name="stays")])
+    gone_id = _id_of(project, "gone")
+    sid = db.create_session(project, "easy")
+    db.record_answer(project, sid, gone_id, "easy", "q", "multiple_choice",
+                     "A", "A", True, 1.0, "", "")
+
+    db.upsert_code_blocks(project, [block_factory(block_name="stays")])  # "gone" removed
+
+    assert {r["block_name"] for r in db.get_all_blocks(project)} == {"stays"}
+    assert db.count_session_answers(project, sid) == 0  # orphaned answer cleared

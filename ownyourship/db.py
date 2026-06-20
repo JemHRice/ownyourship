@@ -76,6 +76,7 @@ def init_db(project_path: Path) -> None:
 def _connect(db_path: Path):
     conn = sqlite3.connect(str(db_path))
     conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA foreign_keys = ON")  # SQLite ignores FKs unless asked
     try:
         yield conn
         conn.commit()
@@ -144,9 +145,11 @@ def upsert_code_blocks(project_path: Path, blocks: List[Dict]) -> None:
             for block_id in ids[len(scanned_by_key.get(key, [])):]
         ]
         if stale_ids:
-            conn.executemany(
-                "DELETE FROM code_blocks WHERE id=?", [(i,) for i in stale_ids]
-            )
+            params = [(i,) for i in stale_ids]
+            # Drop dependent answer rows first, or the foreign key blocks the
+            # delete when a removed block has answer history.
+            conn.executemany("DELETE FROM question_results WHERE block_id=?", params)
+            conn.executemany("DELETE FROM code_blocks WHERE id=?", params)
 
 
 def get_all_blocks(project_path: Path) -> List[Dict]:
@@ -210,6 +213,16 @@ def record_answer(
             ),
         )
         return cur.lastrowid
+
+
+def session_exists(project_path: Path, session_id: int) -> bool:
+    """True if a session with this id was created."""
+    db_path = get_db_path(project_path)
+    with _connect(db_path) as conn:
+        row = conn.execute(
+            "SELECT 1 FROM sessions WHERE id=?", (session_id,)
+        ).fetchone()
+    return row is not None
 
 
 def count_session_answers(project_path: Path, session_id: int) -> int:
