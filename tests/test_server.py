@@ -69,13 +69,14 @@ def test_question_returns_generated_payload(server_client, monkeypatch):
     assert body["total_blocks"] >= 1
 
 
-def test_answer_records_and_grades(server_client):
+def test_answer_records_and_grades(server_client, monkeypatch):
+    _mock_question_generation(monkeypatch)  # serves a question with correct answer "A"
     _scan_and_wait(server_client)
     sid = server_client.post("/api/session/start", json={"mode": "easy"}).json()["session_id"]
-    block_id = 1  # first scanned block
+    q = server_client.get("/api/question", params={"session_id": sid, "mode": "easy"}).json()
 
     resp = server_client.post("/api/answer", json={
-        "session_id": sid, "block_id": block_id, "mode": "easy",
+        "session_id": sid, "block_id": q["block_id"], "mode": "easy",
         "question_text": "q?", "question_type": "multiple_choice",
         "user_answer": "A", "correct_answer": "A", "explanation": "exp",
     })
@@ -314,5 +315,42 @@ def test_answer_rejects_ended_session(server_client):
         "session_id": sid, "block_id": 1, "mode": "easy",
         "question_text": "q?", "question_type": "multiple_choice",
         "user_answer": "A", "correct_answer": "A", "explanation": "exp",
+    })
+    assert resp.status_code == 409
+
+
+# ── Server-side answer integrity (RED — implementation pending) ───────────────
+
+def test_answer_graded_by_server_not_client(server_client, monkeypatch):
+    """The client can't mark a wrong answer correct by lying about correct_answer.
+
+    The mock's correct answer is "A". The user picks "B" (wrong) but the client
+    claims correct_answer is "B" to force a pass. The server must grade against
+    its own stored answer and record this as incorrect.
+    """
+    _mock_question_generation(monkeypatch)
+    _scan_and_wait(server_client)
+    sid = _start_session(server_client)
+    q = server_client.get("/api/question", params={"session_id": sid, "mode": "easy"}).json()
+
+    resp = server_client.post("/api/answer", json={
+        "session_id": sid, "block_id": q["block_id"], "mode": "easy",
+        "question_text": "q", "question_type": "multiple_choice",
+        "user_answer": "B", "correct_answer": "B", "explanation": "",
+    })
+    assert resp.status_code == 200
+    assert resp.json()["is_correct"] is False
+
+
+def test_answer_without_served_question_rejected(server_client):
+    """Grades only come from server-issued questions: answering a block that was
+    never served in this session is rejected, since there's nothing to grade against."""
+    _scan_and_wait(server_client)
+    sid = _start_session(server_client)
+
+    resp = server_client.post("/api/answer", json={
+        "session_id": sid, "block_id": 1, "mode": "easy",
+        "question_text": "q", "question_type": "multiple_choice",
+        "user_answer": "A", "correct_answer": "A", "explanation": "",
     })
     assert resp.status_code == 409

@@ -111,6 +111,7 @@ def server_app(tmp_path):
     _state.session_tokens_in = 0
     _state.session_tokens_out = 0
     _state.session_perf = {}
+    _state.pending_answers = {}
 
     return tmp_path, app
 
