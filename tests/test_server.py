@@ -69,13 +69,14 @@ def test_question_returns_generated_payload(server_client, monkeypatch):
     assert body["total_blocks"] >= 1
 
 
-def test_answer_records_and_grades(server_client):
+def test_answer_records_and_grades(server_client, monkeypatch):
+    _mock_question_generation(monkeypatch)  # serves a question with correct answer "A"
     _scan_and_wait(server_client)
     sid = server_client.post("/api/session/start", json={"mode": "easy"}).json()["session_id"]
-    block_id = 1  # first scanned block
+    q = server_client.get("/api/question", params={"session_id": sid, "mode": "easy"}).json()
 
     resp = server_client.post("/api/answer", json={
-        "session_id": sid, "block_id": block_id, "mode": "easy",
+        "session_id": sid, "block_id": q["block_id"], "mode": "easy",
         "question_text": "q?", "question_type": "multiple_choice",
         "user_answer": "A", "correct_answer": "A", "explanation": "exp",
     })

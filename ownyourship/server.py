@@ -36,6 +36,7 @@ class _State:
     session_tokens_in: int = 0
     session_tokens_out: int = 0
     session_perf: Dict = {}  # {block_id: {"correct": int, "total": int}}
+    pending_answers: Dict = {}  # {(session_id, block_id): correct_letter}
 
 
 _state = _State()
@@ -115,6 +116,7 @@ def create_app(
         _state.session_tokens_in = 0
         _state.session_tokens_out = 0
         _state.session_perf = {}
+        _state.pending_answers = {}
         return {"session_id": sid, "mode": req.mode}
 
     class EndSessionReq(BaseModel):
@@ -170,6 +172,10 @@ def create_app(
         if qdata is None:
             raise HTTPException(500, "Failed to generate question — check API key and try again")
 
+        # Remember the correct answer so /api/answer can grade against the server,
+        # not the client-supplied value.
+        _state.pending_answers[(session_id, block["id"])] = qdata["correct_answer"]
+
         file_abs = _state.project_path / block["file_path"]
         display_snippet = quiz_mod.get_code_context(
             file_abs, block["line_start"], block["line_end"], ctx=2
@@ -204,14 +210,19 @@ def create_app(
         if not db.session_is_active(_state.project_path, req.session_id):
             raise HTTPException(409, "Session already ended")
 
+        # Grade against the answer the server issued, never the client's claim.
+        correct_answer = _state.pending_answers.get((req.session_id, req.block_id))
+        if correct_answer is None:
+            raise HTTPException(409, "No pending question for this block")
+
         user_answer = req.user_answer[:500]
         is_correct, score, feedback = grader.grade_multiple_choice(
-            user_answer, req.correct_answer
+            user_answer, correct_answer
         )
 
         db.record_answer(
             _state.project_path, req.session_id, req.block_id, req.mode,
-            req.question_text, req.question_type, user_answer, req.correct_answer,
+            req.question_text, req.question_type, user_answer, correct_answer,
             is_correct, score, feedback, req.explanation,
         )
 
