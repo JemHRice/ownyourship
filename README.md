@@ -46,7 +46,20 @@ instructions below!
 
 ---
 
-## Setup (Windows)
+## Setup
+
+### Quick install with pipx (any OS)
+
+To just use the tool, install it as a standalone command - no virtualenv to manage:
+
+```
+pipx install git+https://github.com/JemHRice/ownyourship
+```
+
+Then set your API key (see step 5 below) and run `oys` from any project folder.
+A PyPI release is planned, which will shorten this to `pipx install ownyourship`.
+
+### From source (Windows)
 
 ### 1. Clone or download the project
 
