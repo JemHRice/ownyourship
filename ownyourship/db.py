@@ -225,6 +225,16 @@ def session_exists(project_path: Path, session_id: int) -> bool:
     return row is not None
 
 
+def session_is_active(project_path: Path, session_id: int) -> bool:
+    """True if the session exists and has not been ended."""
+    db_path = get_db_path(project_path)
+    with _connect(db_path) as conn:
+        row = conn.execute(
+            "SELECT 1 FROM sessions WHERE id=? AND ended_at IS NULL", (session_id,)
+        ).fetchone()
+    return row is not None
+
+
 def count_session_answers(project_path: Path, session_id: int) -> int:
     """Number of questions answered in a session (one row per answered question).
 

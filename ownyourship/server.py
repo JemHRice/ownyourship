@@ -137,6 +137,9 @@ def create_app(
         if not db.session_exists(_state.project_path, session_id):
             raise HTTPException(404, "Unknown session")
 
+        if not db.session_is_active(_state.project_path, session_id):
+            raise HTTPException(409, "Session already ended")
+
         if db.count_session_answers(_state.project_path, session_id) >= MAX_QUESTIONS_PER_SESSION:
             return {
                 "finished": True,
@@ -197,6 +200,9 @@ def create_app(
     async def submit_answer(req: AnswerReq):
         if not db.session_exists(_state.project_path, req.session_id):
             raise HTTPException(404, "Unknown session")
+
+        if not db.session_is_active(_state.project_path, req.session_id):
+            raise HTTPException(409, "Session already ended")
 
         user_answer = req.user_answer[:500]
         is_correct, score, feedback = grader.grade_multiple_choice(
