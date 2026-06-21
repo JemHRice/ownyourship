@@ -289,3 +289,30 @@ def test_question_finished_when_all_blocks_covered(server_client, monkeypatch):
     body = server_client.get("/api/question", params={"session_id": sid, "mode": "easy"}).json()
     assert body.get("finished") is True
     assert "covered" in body.get("message", "").lower()
+
+
+# ── Reject ended sessions (RED — implementation pending) ──────────────────────
+
+def test_question_rejects_ended_session(server_client, monkeypatch):
+    """Once a session is ended, no more questions may be served for it."""
+    _mock_question_generation(monkeypatch)
+    _scan_and_wait(server_client)
+    sid = _start_session(server_client)
+    server_client.post("/api/session/end", json={"session_id": sid})
+
+    resp = server_client.get("/api/question", params={"session_id": sid, "mode": "easy"})
+    assert resp.status_code == 409
+
+
+def test_answer_rejects_ended_session(server_client):
+    """Once a session is ended, no more answers may be recorded against it."""
+    _scan_and_wait(server_client)
+    sid = _start_session(server_client)
+    server_client.post("/api/session/end", json={"session_id": sid})
+
+    resp = server_client.post("/api/answer", json={
+        "session_id": sid, "block_id": 1, "mode": "easy",
+        "question_text": "q?", "question_type": "multiple_choice",
+        "user_answer": "A", "correct_answer": "A", "explanation": "exp",
+    })
+    assert resp.status_code == 409
