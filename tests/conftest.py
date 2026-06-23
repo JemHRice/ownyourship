@@ -60,6 +60,7 @@ def make_block(
     decorators=None,
     line_start=1,
     line_end=2,
+    content_hash=None,
 ):
     return {
         "file_path": file_path,
@@ -71,6 +72,7 @@ def make_block(
         "decorators": decorators or [],
         "line_start": line_start,
         "line_end": line_end,
+        "content_hash": content_hash,
     }
 
 

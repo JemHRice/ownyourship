@@ -194,3 +194,20 @@ def test_kotlin_uses_java_patterns(tmp_path):
     names = {(b["block_name"], b["block_type"]) for b in _scan_generic(tmp_path, "Widget.kt", src)}
     assert ("Widget", "class") in names
     assert ("Clickable", "class") in names
+
+
+# ── Content hash (RED — implementation pending) ───────────────────────────────
+
+def test_content_hash_ignores_name(tmp_path):
+    """A pure rename (same body) yields the same content hash, so history can be
+    recovered across renames."""
+    body = "    total = 0\n    for x in items:\n        total += x\n    return total\n"
+    a = _scan_py(tmp_path, f"def foo(items):\n{body}")[0]
+    b = _scan_py(tmp_path, f"def bar(items):\n{body}")[0]
+    assert a["content_hash"] == b["content_hash"]
+
+
+def test_content_hash_changes_with_body(tmp_path):
+    a = _scan_py(tmp_path, "def foo():\n    return 1\n")[0]
+    b = _scan_py(tmp_path, "def foo():\n    return 2\n")[0]
+    assert a["content_hash"] != b["content_hash"]

@@ -170,3 +170,37 @@ def test_end_session_persists_cost_and_ended_at(project):
     sess = next(s for s in db.get_history(project, session_limit=5, offset=0) if s["id"] == sid)
     assert sess["cost_usd"] == 0.0123
     assert sess["ended_at"] is not None
+
+
+# ── Content-hash identity preserves history across rename/move (RED) ──────────
+
+def test_rename_preserves_answer_history(project, block_factory):
+    """A block renamed but with an unchanged body (same content hash) keeps its id,
+    so its answer history survives."""
+    db.init_db(project)
+    db.upsert_code_blocks(project, [block_factory(block_name="foo", content_hash="H1")])
+    foo_id = _id_of(project, "foo")
+    sid = db.create_session(project, "easy")
+    db.record_answer(project, sid, foo_id, "easy", "q", "multiple_choice", "A", "A", True, 1.0, "", "")
+
+    db.upsert_code_blocks(project, [block_factory(block_name="bar", content_hash="H1")])  # renamed
+
+    assert {r["block_name"] for r in db.get_all_blocks(project)} == {"bar"}
+    assert _id_of(project, "bar") == foo_id
+    assert db.count_session_answers(project, sid) == 1
+
+
+def test_move_to_new_file_preserves_history(project, block_factory):
+    db.init_db(project)
+    db.upsert_code_blocks(project, [block_factory(file_path="a.py", block_name="foo", content_hash="H1")])
+    old_id = _id_of(project, "foo")
+    sid = db.create_session(project, "easy")
+    db.record_answer(project, sid, old_id, "easy", "q", "multiple_choice", "A", "A", True, 1.0, "", "")
+
+    db.upsert_code_blocks(project, [block_factory(file_path="b.py", block_name="foo", content_hash="H1")])  # moved
+
+    rows = db.get_all_blocks(project)
+    assert len(rows) == 1
+    assert rows[0]["file_path"] == "b.py"
+    assert rows[0]["id"] == old_id
+    assert db.count_session_answers(project, sid) == 1
