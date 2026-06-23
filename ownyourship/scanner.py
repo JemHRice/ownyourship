@@ -1,8 +1,24 @@
 import ast
 import fnmatch
+import hashlib
 import re
 from pathlib import Path
 from typing import Dict, List, Optional
+
+
+def _content_hash(source: str, line_start: int, line_end: int, name: str) -> Optional[str]:
+    """Stable identity hash of a block's source, independent of its name.
+
+    The block's own name is neutralized so a pure rename (same body) yields the
+    same hash; a body edit changes it. Lets upsert recover answer history across
+    renames and moves.
+    """
+    segment = source.splitlines()[line_start - 1:line_end]
+    text = "\n".join(line.rstrip() for line in segment).strip()
+    if not text:
+        return None
+    neutralized = re.sub(rf"\b{re.escape(name)}\b", "\x00", text)
+    return hashlib.sha256(neutralized.encode("utf-8")).hexdigest()
 
 
 # ── Exclusion logic ──────────────────────────────────────────────────────────
@@ -149,6 +165,11 @@ def scan_python_file(file_path: Path, project_path: Path) -> List[Dict]:
                 node.lineno, node.end_lineno,
             ))
 
+    for b in blocks:
+        b["content_hash"] = _content_hash(
+            source, b["line_start"], b["line_end"], b["block_name"]
+        )
+
     return blocks
 
 
@@ -248,6 +269,11 @@ def scan_generic_file(file_path: Path, project_path: Path) -> List[Dict]:
                 "line_start": line_num,
                 "line_end": _block_end_line(source, match.start()) or line_num,
             })
+
+    for b in blocks:
+        b["content_hash"] = _content_hash(
+            source, b["line_start"], b["line_end"], b["block_name"]
+        )
 
     return blocks
 

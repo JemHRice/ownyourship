@@ -36,6 +36,7 @@ def init_db(project_path: Path) -> None:
                 decorators  TEXT,
                 line_start  INTEGER,
                 line_end    INTEGER,
+                content_hash TEXT,
                 scanned_at  TEXT    NOT NULL
             );
 
@@ -71,6 +72,11 @@ def init_db(project_path: Path) -> None:
             CREATE INDEX IF NOT EXISTS idx_cb_file    ON code_blocks(file_path);
         """)
 
+        # Migrate pre-existing DBs that predate the content_hash column.
+        cols = {r["name"] for r in conn.execute("PRAGMA table_info(code_blocks)")}
+        if "content_hash" not in cols:
+            conn.execute("ALTER TABLE code_blocks ADD COLUMN content_hash TEXT")
+
 
 @contextmanager
 def _connect(db_path: Path):
@@ -87,21 +93,56 @@ def _connect(db_path: Path):
         conn.close()
 
 
+def _update_block(conn, block_id: int, b: Dict, now: str) -> None:
+    conn.execute(
+        """UPDATE code_blocks
+           SET file_path=?, block_type=?, block_name=?, parent_class=?,
+               signature=?, docstring=?, decorators=?, line_start=?, line_end=?,
+               content_hash=?, scanned_at=?
+           WHERE id=?""",
+        (
+            b["file_path"], b["block_type"], b["block_name"], b.get("parent_class"),
+            b.get("signature"), b.get("docstring"), json.dumps(b.get("decorators", [])),
+            b["line_start"], b["line_end"], b.get("content_hash"), now, block_id,
+        ),
+    )
+
+
+def _insert_block(conn, b: Dict, now: str) -> None:
+    conn.execute(
+        """INSERT INTO code_blocks
+           (file_path, block_type, block_name, parent_class, signature,
+            docstring, decorators, line_start, line_end, content_hash, scanned_at)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+        (
+            b["file_path"], b["block_type"], b["block_name"], b.get("parent_class"),
+            b.get("signature"), b.get("docstring"), json.dumps(b.get("decorators", [])),
+            b["line_start"], b["line_end"], b.get("content_hash"), now,
+        ),
+    )
+
+
 def upsert_code_blocks(project_path: Path, blocks: List[Dict]) -> None:
-    """True upsert keyed on (file_path, block_type, block_name, parent_class).
+    """Upsert that preserves block IDs (and thus answer history) across rescans.
 
     Block IDs must survive rescans — question_results.block_id references them,
-    and the all-time coverage stats join on those IDs. A delete-and-reinsert
-    would orphan every past answer and reset coverage to zero on each launch.
+    and coverage stats join on those IDs. Matching is two-phase:
+
+    1. Exact key match on (file_path, block_type, block_name, parent_class).
+    2. For anything left over, recover identity by content_hash when the match
+       is unique — so a renamed or moved block keeps its history, while
+       boilerplate that hashes identically (e.g. duplicate __init__s) is not
+       falsely merged.
     """
     db_path = get_db_path(project_path)
     now = _utcnow_iso()
     with _connect(db_path) as conn:
-        existing_by_key: Dict[tuple, List[int]] = {}
-        for row in conn.execute(
-            "SELECT id, file_path, block_type, block_name, parent_class"
+        existing_rows = list(conn.execute(
+            "SELECT id, file_path, block_type, block_name, parent_class, content_hash"
             " FROM code_blocks ORDER BY id"
-        ):
+        ))
+        existing_by_key: Dict[tuple, List[int]] = {}
+        for row in existing_rows:
             key = (row["file_path"], row["block_type"], row["block_name"], row["parent_class"])
             existing_by_key.setdefault(key, []).append(row["id"])
 
@@ -110,40 +151,38 @@ def upsert_code_blocks(project_path: Path, blocks: List[Dict]) -> None:
             key = (b["file_path"], b["block_type"], b["block_name"], b.get("parent_class"))
             scanned_by_key.setdefault(key, []).append(b)
 
+        matched_ids: set = set()
+        unmatched_scanned: List[Dict] = []
+
+        # Phase 1 — exact key match. Duplicate names within a key pair up in order.
         for key, scanned in scanned_by_key.items():
             ids = existing_by_key.get(key, [])
-            # Duplicate names within a file pair up in order; extras are inserted.
             for block_id, b in zip(ids, scanned):
-                conn.execute(
-                    """UPDATE code_blocks
-                       SET signature=?, docstring=?, decorators=?,
-                           line_start=?, line_end=?, scanned_at=?
-                       WHERE id=?""",
-                    (
-                        b.get("signature"), b.get("docstring"),
-                        json.dumps(b.get("decorators", [])),
-                        b["line_start"], b["line_end"], now, block_id,
-                    ),
-                )
-            for b in scanned[len(ids):]:
-                conn.execute(
-                    """INSERT INTO code_blocks
-                       (file_path, block_type, block_name, parent_class, signature,
-                        docstring, decorators, line_start, line_end, scanned_at)
-                       VALUES (?,?,?,?,?,?,?,?,?,?)""",
-                    (
-                        b["file_path"], b["block_type"], b["block_name"],
-                        b.get("parent_class"), b.get("signature"), b.get("docstring"),
-                        json.dumps(b.get("decorators", [])),
-                        b["line_start"], b["line_end"], now,
-                    ),
-                )
+                _update_block(conn, block_id, b, now)
+                matched_ids.add(block_id)
+            unmatched_scanned.extend(scanned[len(ids):])
 
-        stale_ids = [
-            block_id
-            for key, ids in existing_by_key.items()
-            for block_id in ids[len(scanned_by_key.get(key, [])):]
-        ]
+        # Phase 2 — content-hash recovery for leftovers, unique matches only.
+        leftover_existing = [r for r in existing_rows if r["id"] not in matched_ids]
+        existing_by_hash: Dict[str, List[int]] = {}
+        for r in leftover_existing:
+            if r["content_hash"]:
+                existing_by_hash.setdefault(r["content_hash"], []).append(r["id"])
+        scanned_by_hash: Dict[str, List[Dict]] = {}
+        for b in unmatched_scanned:
+            if b.get("content_hash"):
+                scanned_by_hash.setdefault(b["content_hash"], []).append(b)
+
+        for b in unmatched_scanned:
+            h = b.get("content_hash")
+            ex_ids = existing_by_hash.get(h, []) if h else []
+            if h and len(ex_ids) == 1 and len(scanned_by_hash.get(h, [])) == 1:
+                _update_block(conn, ex_ids[0], b, now)
+                matched_ids.add(ex_ids[0])
+            else:
+                _insert_block(conn, b, now)
+
+        stale_ids = [r["id"] for r in existing_rows if r["id"] not in matched_ids]
         if stale_ids:
             params = [(i,) for i in stale_ids]
             # Drop dependent answer rows first, or the foreign key blocks the
