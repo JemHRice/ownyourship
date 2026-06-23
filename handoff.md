@@ -6,8 +6,10 @@
 
 ## Current State
 
-**Date of last update:** 2026-06-18  
-**Status:** Feature-complete v1 with an automated test suite (57 tests, all passing)
+**Date of last update:** 2026-06-22  
+**Status:** Feature-complete v1; 75 passing tests, CI on Python 3.10/3.13, server-side
+trust-boundary hardening complete, packaging publish-ready. `master` is branch-protected
+(PR + green CI required) — work on a branch and open a PR; never commit to `master` directly.
 
 ---
 
@@ -115,14 +117,50 @@ Full initial implementation. See git history or original session notes for detai
 
 ---
 
+## What Was Changed (Session 5 — Testing, Hardening & Process, 2026-06-22)
+
+All work shipped via pull requests (#1–#8), each squash-merged with green CI. The
+dev workflow is now: branch → `test:` (red) → `feat:`/`fix:` (green) → squash-merge.
+
+### Process & tooling
+- GitHub Actions CI (`.github/workflows/ci.yml`) runs the suite on Python 3.10 and 3.13.
+- `CONTRIBUTING.md` (red/green TDD, branch naming, Conventional Commits) + PR template.
+- `.gitattributes` normalizes line endings to LF.
+- **Branch protection on `master`**: requires a PR and the two CI checks; direct pushes
+  blocked (`enforce_admins=false`, so admin can bypass in a pinch).
+
+### Server-side trust-boundary features (all TDD red/green)
+- **20-question session cap** enforced server-side (`db.count_session_answers`).
+- **Session validation**: `/api/question` and `/api/answer` return 404 for unknown sessions.
+- **Foreign-key enforcement**: `PRAGMA foreign_keys = ON`; `upsert_code_blocks` now clears
+  a removed block's answer rows before deleting it, so rescans don't trip the FK.
+- **Reject ended sessions**: both endpoints return 409 once `/api/session/end` is called
+  (`db.session_is_active`).
+- **Server-side answer integrity**: the server stores the correct answer per served
+  question in `_state.pending_answers[(session_id, block_id)]` and grades against it,
+  ignoring the client-supplied `correct_answer`; answering an unserved block returns 409.
+
+### Coverage & packaging
+- Added tests for `/api/stats`, `end_session` cost, Java/Kotlin scanning, the
+  block-exhaustion finish. Suite is now **75 tests**.
+- `pyproject` is distribution-ready (SPDX MIT, classifiers, URLs); README documents a
+  `pipx` install. Not yet published to PyPI.
+
+---
+
 ## Next Steps
 
-Candidates for a future session:
-1. Browser smoke test of the Session 3 UI changes (see known issue 3)
-2. README screenshots + `pipx`/PyPI packaging
-3. Content-hash block identity if rename-history-loss starts to hurt
-4. Refactor `server._state` off the module-level singleton (DI) so server tests
-   needn't reset shared state — would also allow running the app twice in-process
+1. **Content-hash block identity** — make answer history survive renames/moves (today the
+   upsert key is name-based, so a rename orphans history). The active next feature.
+2. Browser smoke test of the Session 3 UI changes (see known issue 3) — still outstanding.
+3. README screenshots (need a browser + API key) and a PyPI publish-on-tag workflow.
+4. Refactor `server._state` off the module-level singleton (DI) so server tests needn't
+   reset shared state — would also allow running the app twice in-process.
+5. "B-full" answer integrity: withhold `correct_answer` from the client and grade each
+   attempt server-side (needs frontend rework).
+6. Low-priority coverage: `/api/shutdown`, scanner signature edge cases, `get_code_context`
+   out-of-range lines. README roadmap also lists proper (non-regex) parsers for non-Python
+   languages and more quiz modes.
 
 ---
 
