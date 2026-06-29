@@ -100,6 +100,17 @@ def test_config_strips_disclaimer_fields(server_client):
     assert "included_extensions" in body
 
 
+def test_diagram_requires_scan(server_client):
+    assert server_client.get("/api/diagram").status_code == 400
+
+
+def test_diagram_endpoint_returns_components(server_client):
+    _scan_and_wait(server_client)
+    body = server_client.get("/api/diagram").json()
+    assert {"components", "function_edges", "component_edges"} <= set(body)
+    assert any(c["functions"] for c in body["components"])  # mod.py / foo
+
+
 # ── 20-question session cap (RED — implementation pending) ────────────────────
 
 SESSION_QUESTION_CAP = 20
