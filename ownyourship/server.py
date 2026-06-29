@@ -12,6 +12,7 @@ from . import config as cfg
 from . import db
 from . import diagram as diagram_mod
 from . import grader
+from . import labels as labels_mod
 from . import quiz as quiz_mod
 from . import scanner
 
@@ -253,6 +254,15 @@ def create_app(
         if not _state.scan_complete:
             raise HTTPException(400, "Scan not complete")
         return diagram_mod.build_diagram(_state.project_path, _state.config)
+
+    @app.get("/api/diagram/labels")
+    async def get_diagram_labels():
+        if not _state.scan_complete:
+            raise HTTPException(400, "Scan not complete")
+        d = diagram_mod.build_diagram(_state.project_path, _state.config)
+        cache_path = _state.project_path / ".oys" / "label_cache.json"
+        await labels_mod.attach_component_labels(d, cache_path, _state.client)
+        return {c["id"]: c.get("label") for c in d["components"]}
 
     # ── Stats ────────────────────────────────────────────────────────────────
 
