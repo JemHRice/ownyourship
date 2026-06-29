@@ -62,6 +62,7 @@ def init_db(project_path: Path) -> None:
                 score         REAL    DEFAULT 0.0,
                 feedback      TEXT,
                 explanation   TEXT,
+                content_hash  TEXT,
                 answered_at   TEXT    NOT NULL,
                 FOREIGN KEY (session_id) REFERENCES sessions(id),
                 FOREIGN KEY (block_id)   REFERENCES code_blocks(id)
@@ -72,10 +73,13 @@ def init_db(project_path: Path) -> None:
             CREATE INDEX IF NOT EXISTS idx_cb_file    ON code_blocks(file_path);
         """)
 
-        # Migrate pre-existing DBs that predate the content_hash column.
-        cols = {r["name"] for r in conn.execute("PRAGMA table_info(code_blocks)")}
-        if "content_hash" not in cols:
+        # Migrate pre-existing DBs that predate the content_hash columns.
+        cb_cols = {r["name"] for r in conn.execute("PRAGMA table_info(code_blocks)")}
+        if "content_hash" not in cb_cols:
             conn.execute("ALTER TABLE code_blocks ADD COLUMN content_hash TEXT")
+        qr_cols = {r["name"] for r in conn.execute("PRAGMA table_info(question_results)")}
+        if "content_hash" not in qr_cols:
+            conn.execute("ALTER TABLE question_results ADD COLUMN content_hash TEXT")
 
 
 @contextmanager
@@ -243,12 +247,13 @@ def record_answer(
             """INSERT INTO question_results
                (session_id, block_id, mode, question_text, question_type,
                 user_answer, correct_answer, is_correct, score, feedback,
-                explanation, answered_at)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
+                explanation, content_hash, answered_at)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,
+                       (SELECT content_hash FROM code_blocks WHERE id=?), ?)""",
             (
                 session_id, block_id, mode, question_text, question_type,
                 user_answer, correct_answer, int(is_correct), score,
-                feedback, explanation, now,
+                feedback, explanation, block_id, now,
             ),
         )
         return cur.lastrowid
@@ -344,11 +349,15 @@ def get_stats(project_path: Path) -> Dict:
             "SELECT COUNT(*) FROM code_blocks WHERE block_type IN ('function','method','class')"
         ).fetchone()[0]
 
+        # A correct answer only counts against the body it was given for, so a
+        # block whose body changed since drops back to not-covered. `IS` is
+        # NULL-safe (matches when both hashes are NULL).
         correct_blocks = conn.execute("""
             SELECT COUNT(DISTINCT qr.block_id)
             FROM question_results qr
             JOIN code_blocks cb ON cb.id = qr.block_id
             WHERE qr.is_correct = 1
+              AND qr.content_hash IS cb.content_hash
               AND cb.block_type IN ('function','method','class')
         """).fetchone()[0]
 
@@ -356,7 +365,7 @@ def get_stats(project_path: Path) -> Dict:
             SELECT
                 cb.file_path,
                 COUNT(DISTINCT cb.id)  AS total_blocks,
-                COUNT(DISTINCT CASE WHEN qr.is_correct=1 THEN qr.block_id END) AS correct_blocks,
+                COUNT(DISTINCT CASE WHEN qr.is_correct=1 AND qr.content_hash IS cb.content_hash THEN qr.block_id END) AS correct_blocks,
                 COUNT(qr.id)           AS attempts,
                 COALESCE(AVG(qr.score), 0) AS avg_score
             FROM code_blocks cb
@@ -370,7 +379,7 @@ def get_stats(project_path: Path) -> Dict:
             SELECT
                 cb.block_type,
                 COUNT(DISTINCT cb.id)  AS total_blocks,
-                COUNT(DISTINCT CASE WHEN qr.is_correct=1 THEN qr.block_id END) AS correct_blocks,
+                COUNT(DISTINCT CASE WHEN qr.is_correct=1 AND qr.content_hash IS cb.content_hash THEN qr.block_id END) AS correct_blocks,
                 COUNT(qr.id)           AS attempts,
                 COALESCE(AVG(qr.score), 0) AS avg_score
             FROM code_blocks cb

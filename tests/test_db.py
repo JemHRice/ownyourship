@@ -220,3 +220,27 @@ def test_body_change_resets_coverage(project, block_factory):
 
     db.upsert_code_blocks(project, [block_factory(block_name="foo", content_hash="H2")])  # body edited
     assert db.get_stats(project)["coverage_pct"] == 0.0
+
+
+def test_unchanged_block_keeps_coverage(project, block_factory):
+    db.init_db(project)
+    db.upsert_code_blocks(project, [block_factory(block_name="foo", content_hash="H1")])
+    foo_id = _id_of(project, "foo")
+    sid = db.create_session(project, "easy")
+    db.record_answer(project, sid, foo_id, "easy", "q", "multiple_choice", "A", "A", True, 1.0, "", "")
+
+    db.upsert_code_blocks(project, [block_factory(block_name="foo", content_hash="H1")])  # unchanged
+    assert db.get_stats(project)["coverage_pct"] == 100.0
+
+
+def test_reanswer_after_change_recovers_coverage(project, block_factory):
+    db.init_db(project)
+    db.upsert_code_blocks(project, [block_factory(block_name="foo", content_hash="H1")])
+    foo_id = _id_of(project, "foo")
+    sid = db.create_session(project, "easy")
+    db.record_answer(project, sid, foo_id, "easy", "q", "multiple_choice", "A", "A", True, 1.0, "", "")
+
+    db.upsert_code_blocks(project, [block_factory(block_name="foo", content_hash="H2")])  # body edited
+    assert db.get_stats(project)["coverage_pct"] == 0.0
+    db.record_answer(project, sid, foo_id, "easy", "q", "multiple_choice", "A", "A", True, 1.0, "", "")
+    assert db.get_stats(project)["coverage_pct"] == 100.0
