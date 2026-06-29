@@ -22,6 +22,7 @@
     <div class="logo">Own<span>Your</span>Ship</div>
     <button class="nav-btn active" id="nav-quiz">&#128218; Quiz</button>
     <button class="nav-btn" id="nav-stats">&#128202; Stats</button>
+    <button class="nav-btn" id="nav-diagram">&#128376; Diagram</button>
     <div class="spacer"></div>
     <button id="rescan-btn">&#8635; Rescan Project</button>
     <button id="end-session-btn">&#x2715; End Session</button>
@@ -180,6 +181,22 @@
       </div>
     </div>
 
+    <!-- Diagram screen -->
+    <div class="screen" id="screen-diagram">
+      <div class="diagram-toolbar">
+        <h2>Architecture</h2>
+        <div class="diagram-controls">
+          <button class="btn-secondary" id="btn-diagram-toggle">Show functions</button>
+          <button class="btn-secondary" id="btn-diagram-labels">&#10024; Describe (Claude)</button>
+          <button class="btn-secondary" id="btn-diagram-fit">Reset view</button>
+          <button class="btn-secondary" id="btn-diagram-png">PNG</button>
+          <button class="btn-secondary" id="btn-diagram-svg">SVG</button>
+        </div>
+      </div>
+      <div id="diagram-hint" class="text-muted">Loading architecture&hellip;</div>
+      <div id="cy"></div>
+    </div>
+
   </main>
 
   <!-- Footer -->
@@ -207,6 +224,8 @@
   <a href="https://console.anthropic.com/settings/limits" target="_blank" rel="noopener">Manage spend limits</a>
 </div>
 
+<script src="https://cdnjs.cloudflare.com/ajax/libs/cytoscape/3.30.2/cytoscape.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/cytoscape-svg@0.4.0/cytoscape-svg.min.js"></script>
 <script src="/static/app.js"></script>
 </body>
 </html>

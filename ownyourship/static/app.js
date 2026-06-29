@@ -610,6 +610,168 @@ $('end-session-btn').addEventListener('click', async () => {
   document.body.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100vh;color:#8b949e;font-family:sans-serif;font-size:16px;">OwnYourShip has shut down. You can close this tab.</div>';
 });
 
+// ── Architecture diagram ─────────────────────────────────────────────────────
+
+const DIAGRAM = { data: null, labels: null, cy: null, mode: 'overview' };
+
+// Register the SVG-export extension if the CDN script loaded.
+try { if (window.cytoscapeSvg) cytoscape.use(window.cytoscapeSvg); } catch (e) { /* optional */ }
+
+$('nav-diagram').addEventListener('click', openDiagram);
+
+async function openDiagram() {
+  setNavActive('diagram');
+  showScreen('diagram');
+  $('diagram-hint').textContent = 'Building architecture map…';
+  try {
+    DIAGRAM.data = await GET('/api/diagram');  // re-fetch so it reflects the latest scan
+  } catch (e) {
+    $('diagram-hint').textContent = 'Failed to load diagram: ' + e.message;
+    return;
+  }
+  renderDiagram(DIAGRAM.mode);
+}
+
+function diagramComponentLabel(c) {
+  const desc = DIAGRAM.labels && DIAGRAM.labels[c.id];
+  return desc ? c.name + '\n' + desc : c.name;
+}
+
+function diagramElements(mode) {
+  const data = DIAGRAM.data;
+  const els = [];
+  if (mode === 'overview') {
+    const ids = new Set(data.components.map(c => c.id));
+    for (const c of data.components) {
+      els.push({ data: { id: c.id, label: diagramComponentLabel(c), kind: 'component' } });
+    }
+    for (const e of data.component_edges) {
+      if (ids.has(e.source) && ids.has(e.target)) {
+        els.push({ data: { id: 'ce:' + e.source + '>' + e.target, source: e.source, target: e.target } });
+      }
+    }
+  } else {
+    const fnIds = new Set();
+    for (const c of data.components) {
+      els.push({ data: { id: c.id, label: c.name, kind: 'component' } });
+      for (const f of c.functions) {
+        fnIds.add(f.id);
+        els.push({ data: { id: f.id, parent: c.id, label: f.name, kind: 'fn' } });
+      }
+    }
+    for (const e of data.function_edges) {
+      if (fnIds.has(e.source) && fnIds.has(e.target)) {
+        els.push({ data: { id: 'fe:' + e.source + '>' + e.target, source: e.source, target: e.target } });
+      }
+    }
+  }
+  return els;
+}
+
+function diagramStyle() {
+  return [
+    { selector: 'node', style: {
+      'background-color': '#1f6feb', 'label': 'data(label)', 'color': '#e6edf3',
+      'font-size': 11, 'text-wrap': 'wrap', 'text-max-width': 170,
+      'text-valign': 'center', 'text-halign': 'center',
+      'border-width': 1, 'border-color': '#30363d',
+    } },
+    { selector: 'node[kind = "component"]', style: {
+      'background-color': '#161b22', 'background-opacity': 0.92, 'shape': 'round-rectangle',
+      'border-color': '#58a6ff', 'border-width': 1.5, 'font-size': 13, 'font-weight': 'bold',
+      'text-valign': 'top', 'padding': '12px', 'color': '#58a6ff',
+    } },
+    { selector: 'node[kind = "fn"]', style: {
+      'shape': 'round-rectangle', 'width': 'label', 'height': 'label', 'padding': '6px',
+    } },
+    { selector: 'edge', style: {
+      'width': 1.5, 'line-color': '#8b949e', 'target-arrow-color': '#8b949e',
+      'target-arrow-shape': 'triangle', 'curve-style': 'bezier', 'arrow-scale': 0.9,
+    } },
+    { selector: '.faded', style: { 'opacity': 0.12 } },
+  ];
+}
+
+function renderDiagram(mode) {
+  DIAGRAM.mode = mode;
+  $('btn-diagram-toggle').textContent = mode === 'overview' ? 'Show functions' : 'Show overview';
+  const n = DIAGRAM.data.components.length;
+  $('diagram-hint').textContent =
+    `${n} component${n !== 1 ? 's' : ''} · arrows are calls · click a node to focus, drag to pan, scroll to zoom`;
+
+  if (DIAGRAM.cy) { DIAGRAM.cy.destroy(); DIAGRAM.cy = null; }
+
+  DIAGRAM.cy = cytoscape({
+    container: $('cy'),
+    elements: diagramElements(mode),
+    style: diagramStyle(),
+    layout: { name: 'cose', animate: false, padding: 30, nodeDimensionsIncludeLabels: true },
+    wheelSensitivity: 0.2,
+  });
+
+  DIAGRAM.cy.on('tap', 'node', evt => focusNode(evt.target));
+  DIAGRAM.cy.on('tap', evt => { if (evt.target === DIAGRAM.cy) clearDiagramFocus(); });
+}
+
+function focusNode(node) {
+  const cy = DIAGRAM.cy;
+  cy.elements().addClass('faded');
+  node.closedNeighborhood().removeClass('faded');
+}
+
+function clearDiagramFocus() {
+  if (DIAGRAM.cy) DIAGRAM.cy.elements().removeClass('faded');
+}
+
+$('btn-diagram-toggle').addEventListener('click', () => {
+  if (DIAGRAM.data) renderDiagram(DIAGRAM.mode === 'overview' ? 'detail' : 'overview');
+});
+
+$('btn-diagram-fit').addEventListener('click', () => {
+  clearDiagramFocus();
+  if (DIAGRAM.cy) DIAGRAM.cy.fit(undefined, 30);
+});
+
+// Claude descriptions — costs API calls (cached server-side by content), so opt-in.
+$('btn-diagram-labels').addEventListener('click', async () => {
+  const btn = $('btn-diagram-labels');
+  const prev = btn.innerHTML;
+  btn.disabled = true;
+  btn.textContent = 'Describing…';
+  try {
+    DIAGRAM.labels = await GET('/api/diagram/labels');
+    if (DIAGRAM.mode === 'overview') renderDiagram('overview');
+  } catch (e) {
+    $('diagram-hint').textContent = 'Failed to generate descriptions: ' + e.message;
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = prev;
+  }
+});
+
+$('btn-diagram-png').addEventListener('click', () => {
+  if (!DIAGRAM.cy) return;
+  downloadURI(DIAGRAM.cy.png({ full: true, scale: 2, bg: '#0d1117' }), 'architecture.png');
+});
+
+$('btn-diagram-svg').addEventListener('click', () => {
+  if (!DIAGRAM.cy || typeof DIAGRAM.cy.svg !== 'function') {
+    $('diagram-hint').textContent = 'SVG export unavailable (extension failed to load); PNG still works.';
+    return;
+  }
+  const svg = DIAGRAM.cy.svg({ full: true, bg: '#0d1117' });
+  downloadURI('data:image/svg+xml;utf8,' + encodeURIComponent(svg), 'architecture.svg');
+});
+
+function downloadURI(uri, name) {
+  const a = document.createElement('a');
+  a.href = uri;
+  a.download = name;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+}
+
 // ── Utilities ────────────────────────────────────────────────────────────────
 
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
