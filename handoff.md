@@ -7,9 +7,36 @@
 ## Current State
 
 **Date of last update:** 2026-06-22  
-**Status:** Feature-complete v1; 75 passing tests, CI on Python 3.10/3.13, server-side
-trust-boundary hardening complete, packaging publish-ready. `master` is branch-protected
-(PR + green CI required) — work on a branch and open a PR; never commit to `master` directly.
+**Status:** Feature-complete v1; 79 passing tests, CI on Python 3.10/3.13, server-side
+trust-boundary hardening complete, content-hash block identity shipped, packaging
+publish-ready. `master` is branch-protected (PR + green CI required) — work on a branch
+and open a PR; never commit to `master` directly.
+
+---
+
+## Proposed Features (incoming — 2026-06-22, REQUIREMENTS BEING CLARIFIED)
+
+Two features requested by the owner. Captured raw so they're not lost; exact scope is
+being interrogated before any planning/building.
+
+### 1. Architecture / function-relationship diagram
+Let the user **download or interactively view a diagram** of how the core functions of
+their code work together. Nodes could be individual functions working together, or larger
+code blocks — granularity intentionally undecided. To clarify: what nodes represent, what
+the edges mean (call graph? data/control flow? imports?), whether it's derived from static
+analysis (literal/accurate) or LLM-inferred (narrative/insightful), and output format
+(downloadable image vs interactive in the web UI).
+
+### 2. Accurate, persistent cross-session metrics ("remember what's been learned")
+Metrics must be **accurate across multiple sessions** and **persist learned progress across
+app close/restart**. Progress should **reset only when the codebase changes**, and the reset
+should affect **only the changed parts** of the code.
+NOTE — much of this may already exist: coverage is persisted in SQLite across sessions and
+restarts, and content-hash block identity (PR #10) already resets a block's history only when
+that block's body changes (unchanged blocks keep history). Likely real gap: question selection
+is currently **fresh-slate per session by design** (cross-session `all_time_perf` was
+deliberately removed in Session 3) — the owner probably wants **persistent per-block mastery**
+reintroduced. Exact gap still being interrogated.
 
 ---
 
