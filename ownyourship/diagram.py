@@ -4,8 +4,9 @@ Components are files; each holds its functions/methods/classes. Edges are the
 call graph: function-to-function plus an aggregated component-to-component view
 (intra-file calls are dropped from the component view as internal detail).
 """
+import hashlib
 from pathlib import Path
-from typing import Dict
+from typing import Dict, List
 
 from . import callgraph, scanner
 
@@ -15,6 +16,12 @@ def _qualname(block: Dict) -> str:
     if block.get("parent_class"):
         name = f"{block['parent_class']}.{name}"
     return f"{block['file_path']}::{name}"
+
+
+def _fingerprint(functions: List[Dict]) -> str:
+    """Stable hash of a component's functions + their bodies, for label caching."""
+    parts = sorted(f"{f['id']}:{f.get('content_hash')}" for f in functions)
+    return hashlib.sha256("\n".join(parts).encode("utf-8")).hexdigest()
 
 
 def build_diagram(project_path: Path, config: dict) -> Dict:
@@ -32,6 +39,7 @@ def build_diagram(project_path: Path, config: dict) -> Dict:
             "name": b["block_name"],
             "type": b["block_type"],
             "parent_class": b.get("parent_class"),
+            "content_hash": b.get("content_hash"),
         })
 
     function_edges = [{"source": s, "target": t} for s, t in sorted(edges)]
@@ -45,6 +53,9 @@ def build_diagram(project_path: Path, config: dict) -> Dict:
         {"source": sf, "target": tf, "count": c}
         for (sf, tf), c in sorted(comp_counts.items())
     ]
+
+    for comp in components.values():
+        comp["fingerprint"] = _fingerprint(comp["functions"])
 
     return {
         "components": sorted(components.values(), key=lambda c: c["id"]),

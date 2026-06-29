@@ -51,3 +51,9 @@ def test_methods_included_with_class(tmp_path):
     run = next(f for f in fns if f["name"] == "run")
     assert run["id"] == "a.py::C.run"
     assert run["parent_class"] == "C"
+
+
+def test_component_has_content_fingerprint(tmp_path):
+    _write(tmp_path, "a.py", "def foo():\n    pass\n")
+    d = diagram.build_diagram(tmp_path, CONFIG)
+    assert _component(d, "a.py")["fingerprint"]  # for label caching

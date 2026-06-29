@@ -111,6 +111,18 @@ def test_diagram_endpoint_returns_components(server_client):
     assert any(c["functions"] for c in body["components"])  # mod.py / foo
 
 
+def test_diagram_labels_endpoint(server_client, monkeypatch):
+    from ownyourship import labels
+
+    async def fake_label(component, client):
+        return "a label"
+
+    monkeypatch.setattr(labels, "generate_component_label", fake_label)
+    _scan_and_wait(server_client)
+    body = server_client.get("/api/diagram/labels").json()
+    assert body and all(v == "a label" for v in body.values())
+
+
 # ── 20-question session cap (RED — implementation pending) ────────────────────
 
 SESSION_QUESTION_CAP = 20
