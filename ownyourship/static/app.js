@@ -612,7 +612,7 @@ $('end-session-btn').addEventListener('click', async () => {
 
 // ── Architecture diagram ─────────────────────────────────────────────────────
 
-const DIAGRAM = { data: null, labels: null, cy: null, mode: 'overview' };
+const DIAGRAM = { data: null, labels: null, cy: null, mode: 'overview', file: null, fnIndex: null };
 
 // Register the SVG-export extension if the CDN script loaded.
 try { if (window.cytoscapeSvg) cytoscape.use(window.cytoscapeSvg); } catch (e) { /* optional */ }
@@ -624,12 +624,19 @@ async function openDiagram() {
   showScreen('diagram');
   $('diagram-hint').textContent = 'Building architecture map…';
   try {
-    DIAGRAM.data = await GET('/api/diagram');  // re-fetch so it reflects the latest scan
+    DIAGRAM.data = await GET('/api/diagram');  // fetched once; selections re-render from this
   } catch (e) {
     $('diagram-hint').textContent = 'Failed to load diagram: ' + e.message;
     return;
   }
-  renderDiagram(DIAGRAM.mode);
+  DIAGRAM.fnIndex = {};
+  for (const c of DIAGRAM.data.components)
+    for (const f of c.functions) DIAGRAM.fnIndex[f.id] = c.id;  // function id -> file
+  showOverview();
+}
+
+function componentById(id) {
+  return DIAGRAM.data.components.find(c => c.id === id);
 }
 
 function diagramComponentLabel(c) {
@@ -637,36 +644,53 @@ function diagramComponentLabel(c) {
   return desc ? c.name + '\n' + desc : c.name;
 }
 
-function diagramElements(mode) {
+// ── Element builders ──────────────────────────────────────────────────────────
+
+function overviewElements() {
   const data = DIAGRAM.data;
+  const ids = new Set(data.components.map(c => c.id));
   const els = [];
-  if (mode === 'overview') {
-    const ids = new Set(data.components.map(c => c.id));
-    for (const c of data.components) {
-      els.push({ data: { id: c.id, label: diagramComponentLabel(c), kind: 'component' } });
-    }
-    for (const e of data.component_edges) {
-      if (ids.has(e.source) && ids.has(e.target)) {
-        els.push({ data: { id: 'ce:' + e.source + '>' + e.target, source: e.source, target: e.target } });
-      }
-    }
-  } else {
-    const fnIds = new Set();
-    for (const c of data.components) {
-      els.push({ data: { id: c.id, label: c.name, kind: 'component' } });
-      for (const f of c.functions) {
-        fnIds.add(f.id);
-        els.push({ data: { id: f.id, parent: c.id, label: f.name, kind: 'fn' } });
-      }
-    }
-    for (const e of data.function_edges) {
-      if (fnIds.has(e.source) && fnIds.has(e.target)) {
-        els.push({ data: { id: 'fe:' + e.source + '>' + e.target, source: e.source, target: e.target } });
-      }
-    }
-  }
+  for (const c of data.components)
+    els.push({ data: { id: c.id, label: diagramComponentLabel(c), kind: 'component' } });
+  for (const e of data.component_edges)
+    if (ids.has(e.source) && ids.has(e.target))
+      els.push({ data: { id: 'ce:' + e.source + '>' + e.target, source: e.source, target: e.target } });
   return els;
 }
+
+// One file's functions, plus a 1-hop boundary (callers AND callees in other files).
+function fileElements(fileId) {
+  const data = DIAGRAM.data, idx = DIAGRAM.fnIndex;
+  const files = new Set([fileId]);
+  const fns = new Set();
+  const edges = [];
+
+  for (const f of componentById(fileId).functions) fns.add(f.id);
+
+  for (const e of data.function_edges) {
+    if (idx[e.source] === fileId || idx[e.target] === fileId) {
+      if (idx[e.source]) { fns.add(e.source); files.add(idx[e.source]); }
+      if (idx[e.target]) { fns.add(e.target); files.add(idx[e.target]); }
+      edges.push(e);
+    }
+  }
+
+  const els = [];
+  for (const fid of files) {
+    const isSel = fid === fileId;
+    const c = componentById(fid);
+    els.push({ data: { id: fid, label: isSel ? diagramComponentLabel(c) : c.name, kind: 'component', boundary: isSel ? 0 : 1 } });
+    for (const f of c.functions)
+      if (fns.has(f.id))
+        els.push({ data: { id: f.id, parent: fid, label: f.name, kind: 'fn', boundary: isSel ? 0 : 1 } });
+  }
+  for (const e of edges)
+    if (fns.has(e.source) && fns.has(e.target))
+      els.push({ data: { id: 'fe:' + e.source + '>' + e.target, source: e.source, target: e.target } });
+  return els;
+}
+
+// ── Rendering ─────────────────────────────────────────────────────────────────
 
 function diagramStyle() {
   return [
@@ -684,6 +708,7 @@ function diagramStyle() {
     { selector: 'node[kind = "fn"]', style: {
       'shape': 'round-rectangle', 'width': 'label', 'height': 'label', 'padding': '6px',
     } },
+    { selector: 'node[boundary = 1]', style: { 'opacity': 0.55, 'border-color': '#8b949e', 'color': '#8b949e' } },
     { selector: 'edge', style: {
       'width': 1.5, 'line-color': '#8b949e', 'target-arrow-color': '#8b949e',
       'target-arrow-shape': 'triangle', 'curve-style': 'bezier', 'arrow-scale': 0.9,
@@ -692,25 +717,41 @@ function diagramStyle() {
   ];
 }
 
-function renderDiagram(mode) {
-  DIAGRAM.mode = mode;
-  $('btn-diagram-toggle').textContent = mode === 'overview' ? 'Show functions' : 'Show overview';
-  const n = DIAGRAM.data.components.length;
-  $('diagram-hint').textContent =
-    `${n} component${n !== 1 ? 's' : ''} · arrows are calls · click a node to focus, drag to pan, scroll to zoom`;
-
+function makeCy(elements) {
   if (DIAGRAM.cy) { DIAGRAM.cy.destroy(); DIAGRAM.cy = null; }
-
   DIAGRAM.cy = cytoscape({
     container: $('cy'),
-    elements: diagramElements(mode),
+    elements,
     style: diagramStyle(),
     layout: { name: 'cose', animate: false, padding: 30, nodeDimensionsIncludeLabels: true },
     wheelSensitivity: 0.2,
   });
+}
 
-  DIAGRAM.cy.on('tap', 'node', evt => focusNode(evt.target));
-  DIAGRAM.cy.on('tap', evt => { if (evt.target === DIAGRAM.cy) clearDiagramFocus(); });
+function showOverview() {
+  DIAGRAM.mode = 'overview';
+  DIAGRAM.file = null;
+  hide($('btn-diagram-toggle'));
+  const n = DIAGRAM.data.components.length;
+  $('diagram-hint').textContent =
+    `${n} component${n !== 1 ? 's' : ''} · arrows are calls · click a file to expand its functions, drag to pan, scroll to zoom`;
+  makeCy(overviewElements());
+  DIAGRAM.cy.on('tap', 'node[kind = "component"]', evt => showFile(evt.target.id()));
+}
+
+function showFile(fileId) {
+  DIAGRAM.mode = 'file';
+  DIAGRAM.file = fileId;
+  show($('btn-diagram-toggle'));
+  const c = componentById(fileId);
+  $('diagram-hint').textContent =
+    `${c.name} · its functions + immediate cross-file calls (faded = other files) · click a faded file to jump, click empty space for overview`;
+  makeCy(fileElements(fileId));
+  DIAGRAM.cy.on('tap', 'node[kind = "component"]', evt => {
+    if (evt.target.id() !== DIAGRAM.file) showFile(evt.target.id());
+  });
+  DIAGRAM.cy.on('tap', 'node[kind = "fn"]', evt => focusNode(evt.target));
+  DIAGRAM.cy.on('tap', evt => { if (evt.target === DIAGRAM.cy) showOverview(); });
 }
 
 function focusNode(node) {
@@ -719,20 +760,14 @@ function focusNode(node) {
   node.closedNeighborhood().removeClass('faded');
 }
 
-function clearDiagramFocus() {
-  if (DIAGRAM.cy) DIAGRAM.cy.elements().removeClass('faded');
-}
-
-$('btn-diagram-toggle').addEventListener('click', () => {
-  if (DIAGRAM.data) renderDiagram(DIAGRAM.mode === 'overview' ? 'detail' : 'overview');
-});
+$('btn-diagram-toggle').textContent = '← Overview';
+$('btn-diagram-toggle').addEventListener('click', () => { if (DIAGRAM.data) showOverview(); });
 
 $('btn-diagram-fit').addEventListener('click', () => {
-  clearDiagramFocus();
-  if (DIAGRAM.cy) DIAGRAM.cy.fit(undefined, 30);
+  if (DIAGRAM.cy) { DIAGRAM.cy.elements().removeClass('faded'); DIAGRAM.cy.fit(undefined, 30); }
 });
 
-// Claude descriptions — costs API calls (cached server-side by content), so opt-in.
+// Claude descriptions — fetched once, reused across selections (server-cached by content).
 $('btn-diagram-labels').addEventListener('click', async () => {
   const btn = $('btn-diagram-labels');
   const prev = btn.innerHTML;
@@ -740,7 +775,7 @@ $('btn-diagram-labels').addEventListener('click', async () => {
   btn.textContent = 'Describing…';
   try {
     DIAGRAM.labels = await GET('/api/diagram/labels');
-    if (DIAGRAM.mode === 'overview') renderDiagram('overview');
+    if (DIAGRAM.mode === 'overview') showOverview(); else showFile(DIAGRAM.file);
   } catch (e) {
     $('diagram-hint').textContent = 'Failed to generate descriptions: ' + e.message;
   } finally {
