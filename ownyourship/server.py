@@ -10,6 +10,7 @@ from pydantic import BaseModel
 
 from . import config as cfg
 from . import db
+from . import diagram as diagram_mod
 from . import grader
 from . import quiz as quiz_mod
 from . import scanner
@@ -244,6 +245,14 @@ def create_app(
             "session_cost_usd": round(cost, 4),
             "cost_warning": cost >= threshold,
         }
+
+    # ── Diagram ──────────────────────────────────────────────────────────────
+
+    @app.get("/api/diagram")
+    async def get_diagram():
+        if not _state.scan_complete:
+            raise HTTPException(400, "Scan not complete")
+        return diagram_mod.build_diagram(_state.project_path, _state.config)
 
     # ── Stats ────────────────────────────────────────────────────────────────
 
