@@ -204,3 +204,43 @@ def test_move_to_new_file_preserves_history(project, block_factory):
     assert rows[0]["file_path"] == "b.py"
     assert rows[0]["id"] == old_id
     assert db.count_session_answers(project, sid) == 1
+
+
+# ── Reset-on-change coverage (RED — implementation pending) ───────────────────
+
+def test_body_change_resets_coverage(project, block_factory):
+    """A correct answer counts toward coverage only against the body it was given
+    for. Editing the body (new content_hash) drops the block back to not-covered."""
+    db.init_db(project)
+    db.upsert_code_blocks(project, [block_factory(block_name="foo", content_hash="H1")])
+    foo_id = _id_of(project, "foo")
+    sid = db.create_session(project, "easy")
+    db.record_answer(project, sid, foo_id, "easy", "q", "multiple_choice", "A", "A", True, 1.0, "", "")
+    assert db.get_stats(project)["coverage_pct"] == 100.0
+
+    db.upsert_code_blocks(project, [block_factory(block_name="foo", content_hash="H2")])  # body edited
+    assert db.get_stats(project)["coverage_pct"] == 0.0
+
+
+def test_unchanged_block_keeps_coverage(project, block_factory):
+    db.init_db(project)
+    db.upsert_code_blocks(project, [block_factory(block_name="foo", content_hash="H1")])
+    foo_id = _id_of(project, "foo")
+    sid = db.create_session(project, "easy")
+    db.record_answer(project, sid, foo_id, "easy", "q", "multiple_choice", "A", "A", True, 1.0, "", "")
+
+    db.upsert_code_blocks(project, [block_factory(block_name="foo", content_hash="H1")])  # unchanged
+    assert db.get_stats(project)["coverage_pct"] == 100.0
+
+
+def test_reanswer_after_change_recovers_coverage(project, block_factory):
+    db.init_db(project)
+    db.upsert_code_blocks(project, [block_factory(block_name="foo", content_hash="H1")])
+    foo_id = _id_of(project, "foo")
+    sid = db.create_session(project, "easy")
+    db.record_answer(project, sid, foo_id, "easy", "q", "multiple_choice", "A", "A", True, 1.0, "", "")
+
+    db.upsert_code_blocks(project, [block_factory(block_name="foo", content_hash="H2")])  # body edited
+    assert db.get_stats(project)["coverage_pct"] == 0.0
+    db.record_answer(project, sid, foo_id, "easy", "q", "multiple_choice", "A", "A", True, 1.0, "", "")
+    assert db.get_stats(project)["coverage_pct"] == 100.0
