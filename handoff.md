@@ -14,29 +14,33 @@ and open a PR; never commit to `master` directly.
 
 ---
 
-## Proposed Features (incoming — 2026-06-22, REQUIREMENTS BEING CLARIFIED)
+## Proposed Features (2026-06-22 — CLARIFIED end state, not yet planned/built)
 
-Two features requested by the owner. Captured raw so they're not lost; exact scope is
-being interrogated before any planning/building.
+Requirements interrogated with the owner. These describe the agreed **end result**, not
+an implementation plan.
 
-### 1. Architecture / function-relationship diagram
-Let the user **download or interactively view a diagram** of how the core functions of
-their code work together. Nodes could be individual functions working together, or larger
-code blocks — granularity intentionally undecided. To clarify: what nodes represent, what
-the edges mean (call graph? data/control flow? imports?), whether it's derived from static
-analysis (literal/accurate) or LLM-inferred (narrative/insightful), and output format
-(downloadable image vs interactive in the web UI).
+### 1. Architecture diagram (the real build) — NOT STARTED
+An interactive diagram in the local web UI of how the project fits together:
+- **Nodes**: component boxes (the natural subsystems — scanner, server, db, quiz, grader,
+  config, main, static UI) that **zoom/expand** to reveal the functions/methods inside.
+- **Edges**: a **call graph** ("A calls B") — aggregated between components at the overview
+  level, function-to-function when a box is expanded.
+- **Hybrid generation**: edges are **exact**, parsed from the real code (no invented links);
+  **Claude adds plain-language labels** describing what each component/function does.
+- **Consume both ways**: explore live (pan/zoom/expand, focus on one node to see its
+  connections outward) **and** a button to **export a static copy** (image/SVG/PDF).
+- **Scope**: whole-project overview that narrows to focus on one area.
 
-### 2. Accurate, persistent cross-session metrics ("remember what's been learned")
-Metrics must be **accurate across multiple sessions** and **persist learned progress across
-app close/restart**. Progress should **reset only when the codebase changes**, and the reset
-should affect **only the changed parts** of the code.
-NOTE — much of this may already exist: coverage is persisted in SQLite across sessions and
-restarts, and content-hash block identity (PR #10) already resets a block's history only when
-that block's body changes (unchanged blocks keep history). Likely real gap: question selection
-is currently **fresh-slate per session by design** (cross-session `all_time_perf` was
-deliberately removed in Session 3) — the owner probably wants **persistent per-block mastery**
-reintroduced. Exact gap still being interrogated.
+### 2. Metrics — mostly already done; one small change (reset-on-change) — NOT STARTED
+Coverage is already accurate, cumulative across sessions, and survives close/restart — the
+owner confirmed "persistence is enough," so **no cross-session selection / difficulty work**.
+The one agreed change (owner chose option **b**):
+- **Editing a function's body resets that block's coverage** (it must be re-learned), while
+  every unchanged block keeps its progress. Rename/move alone does NOT reset (already handled
+  by content-hash identity, PR #10).
+- End state: a block counts as "covered" only when answered correctly **against its current
+  body** (its current `content_hash`). The scanner already emits that per-block hash, which
+  changes exactly when the body changes — so this is a small, well-scoped addition.
 
 ---
 
