@@ -12,13 +12,31 @@ import anthropic
 from .quiz import HAIKU_MODEL
 
 
+def _looks_like_a_question(text: str) -> bool:
+    """A description shouldn't be a question — that means the model asked for input
+    (e.g. "could you share the source?") instead of describing the file."""
+    return not text or text.rstrip().endswith("?")
+
+
+def _function_listing(component: Dict) -> str:
+    lines = []
+    for f in component["functions"][:30]:
+        sig = f.get("signature") or f["name"]
+        doc = (f.get("docstring") or "").strip().splitlines()
+        first = f"  # {doc[0]}" if doc else ""
+        lines.append(f"- {sig}{first}")
+    return "\n".join(lines) or "(no functions)"
+
+
 async def generate_component_label(component: Dict, client) -> str:
     """One short sentence describing what a component (file) does."""
-    fn_names = ", ".join(f["name"] for f in component["functions"][:30]) or "(no functions)"
     prompt = (
-        f"This is a source file named `{component['name']}` in a codebase. It defines: "
-        f"{fn_names}.\n\nIn ONE short sentence (no preamble), describe what this file is "
-        f"responsible for. Reply with the sentence only."
+        f"A source file named `{component['name']}` defines these functions "
+        f"(signatures, with a docstring line where present):\n"
+        f"{_function_listing(component)}\n\n"
+        f"From the names and signatures alone, infer what this file is responsible for. "
+        f"Reply with ONE short declarative sentence and nothing else. Do NOT ask for the "
+        f"source code or say you lack information; give your best inference."
     )
     try:
         resp = await client.messages.create(
@@ -28,7 +46,8 @@ async def generate_component_label(component: Dict, client) -> str:
         )
     except anthropic.APIError:
         return ""
-    return resp.content[0].text.strip()
+    text = resp.content[0].text.strip()
+    return "" if _looks_like_a_question(text) else text
 
 
 def _load_cache(cache_path: Path) -> Dict:

@@ -39,6 +39,8 @@ def build_diagram(project_path: Path, config: dict) -> Dict:
             "name": b["block_name"],
             "type": b["block_type"],
             "parent_class": b.get("parent_class"),
+            "signature": b.get("signature"),
+            "docstring": b.get("docstring"),
             "content_hash": b.get("content_hash"),
         })
 
