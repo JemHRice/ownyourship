@@ -610,6 +610,203 @@ $('end-session-btn').addEventListener('click', async () => {
   document.body.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100vh;color:#8b949e;font-family:sans-serif;font-size:16px;">OwnYourShip has shut down. You can close this tab.</div>';
 });
 
+// ── Architecture diagram ─────────────────────────────────────────────────────
+
+const DIAGRAM = { data: null, labels: null, cy: null, mode: 'overview', file: null, fnIndex: null };
+
+// Register the SVG-export extension if the CDN script loaded.
+try { if (window.cytoscapeSvg) cytoscape.use(window.cytoscapeSvg); } catch (e) { /* optional */ }
+
+$('nav-diagram').addEventListener('click', openDiagram);
+
+async function openDiagram() {
+  setNavActive('diagram');
+  showScreen('diagram');
+  $('diagram-hint').textContent = 'Building architecture map…';
+  try {
+    DIAGRAM.data = await GET('/api/diagram');  // fetched once; selections re-render from this
+  } catch (e) {
+    $('diagram-hint').textContent = 'Failed to load diagram: ' + e.message;
+    return;
+  }
+  DIAGRAM.fnIndex = {};
+  for (const c of DIAGRAM.data.components)
+    for (const f of c.functions) DIAGRAM.fnIndex[f.id] = c.id;  // function id -> file
+  showOverview();
+}
+
+function componentById(id) {
+  return DIAGRAM.data.components.find(c => c.id === id);
+}
+
+function diagramComponentLabel(c) {
+  const desc = DIAGRAM.labels && DIAGRAM.labels[c.id];
+  return desc ? c.name + '\n' + desc : c.name;
+}
+
+// ── Element builders ──────────────────────────────────────────────────────────
+
+function overviewElements() {
+  const data = DIAGRAM.data;
+  const ids = new Set(data.components.map(c => c.id));
+  const els = [];
+  for (const c of data.components)
+    els.push({ data: { id: c.id, label: diagramComponentLabel(c), kind: 'component' } });
+  for (const e of data.component_edges)
+    if (ids.has(e.source) && ids.has(e.target))
+      els.push({ data: { id: 'ce:' + e.source + '>' + e.target, source: e.source, target: e.target } });
+  return els;
+}
+
+// One file's functions, plus a 1-hop boundary (callers AND callees in other files).
+function fileElements(fileId) {
+  const data = DIAGRAM.data, idx = DIAGRAM.fnIndex;
+  const files = new Set([fileId]);
+  const fns = new Set();
+  const edges = [];
+
+  for (const f of componentById(fileId).functions) fns.add(f.id);
+
+  for (const e of data.function_edges) {
+    if (idx[e.source] === fileId || idx[e.target] === fileId) {
+      if (idx[e.source]) { fns.add(e.source); files.add(idx[e.source]); }
+      if (idx[e.target]) { fns.add(e.target); files.add(idx[e.target]); }
+      edges.push(e);
+    }
+  }
+
+  const els = [];
+  for (const fid of files) {
+    const isSel = fid === fileId;
+    const c = componentById(fid);
+    els.push({ data: { id: fid, label: isSel ? diagramComponentLabel(c) : c.name, kind: 'component', boundary: isSel ? 0 : 1 } });
+    for (const f of c.functions)
+      if (fns.has(f.id))
+        els.push({ data: { id: f.id, parent: fid, label: f.name, kind: 'fn', boundary: isSel ? 0 : 1 } });
+  }
+  for (const e of edges)
+    if (fns.has(e.source) && fns.has(e.target))
+      els.push({ data: { id: 'fe:' + e.source + '>' + e.target, source: e.source, target: e.target } });
+  return els;
+}
+
+// ── Rendering ─────────────────────────────────────────────────────────────────
+
+function diagramStyle() {
+  return [
+    { selector: 'node', style: {
+      'background-color': '#1f6feb', 'label': 'data(label)', 'color': '#e6edf3',
+      'font-size': 11, 'text-wrap': 'wrap', 'text-max-width': 170,
+      'text-valign': 'center', 'text-halign': 'center',
+      'border-width': 1, 'border-color': '#30363d',
+    } },
+    { selector: 'node[kind = "component"]', style: {
+      'background-color': '#161b22', 'background-opacity': 0.92, 'shape': 'round-rectangle',
+      'border-color': '#58a6ff', 'border-width': 1.5, 'font-size': 13, 'font-weight': 'bold',
+      'text-valign': 'top', 'padding': '12px', 'color': '#58a6ff',
+    } },
+    { selector: 'node[kind = "fn"]', style: {
+      'shape': 'round-rectangle', 'width': 'label', 'height': 'label', 'padding': '6px',
+    } },
+    { selector: 'node[boundary = 1]', style: { 'opacity': 0.55, 'border-color': '#8b949e', 'color': '#8b949e' } },
+    { selector: 'edge', style: {
+      'width': 1.5, 'line-color': '#8b949e', 'target-arrow-color': '#8b949e',
+      'target-arrow-shape': 'triangle', 'curve-style': 'bezier', 'arrow-scale': 0.9,
+    } },
+    { selector: '.faded', style: { 'opacity': 0.12 } },
+  ];
+}
+
+function makeCy(elements) {
+  if (DIAGRAM.cy) { DIAGRAM.cy.destroy(); DIAGRAM.cy = null; }
+  DIAGRAM.cy = cytoscape({
+    container: $('cy'),
+    elements,
+    style: diagramStyle(),
+    layout: { name: 'cose', animate: false, padding: 30, nodeDimensionsIncludeLabels: true },
+    wheelSensitivity: 0.2,
+  });
+}
+
+function showOverview() {
+  DIAGRAM.mode = 'overview';
+  DIAGRAM.file = null;
+  hide($('btn-diagram-toggle'));
+  const n = DIAGRAM.data.components.length;
+  $('diagram-hint').textContent =
+    `${n} component${n !== 1 ? 's' : ''} · arrows are calls · click a file to expand its functions, drag to pan, scroll to zoom`;
+  makeCy(overviewElements());
+  DIAGRAM.cy.on('tap', 'node[kind = "component"]', evt => showFile(evt.target.id()));
+}
+
+function showFile(fileId) {
+  DIAGRAM.mode = 'file';
+  DIAGRAM.file = fileId;
+  show($('btn-diagram-toggle'));
+  const c = componentById(fileId);
+  $('diagram-hint').textContent =
+    `${c.name} · its functions + immediate cross-file calls (faded = other files) · click a faded file to jump, click empty space for overview`;
+  makeCy(fileElements(fileId));
+  DIAGRAM.cy.on('tap', 'node[kind = "component"]', evt => {
+    if (evt.target.id() !== DIAGRAM.file) showFile(evt.target.id());
+  });
+  DIAGRAM.cy.on('tap', 'node[kind = "fn"]', evt => focusNode(evt.target));
+  DIAGRAM.cy.on('tap', evt => { if (evt.target === DIAGRAM.cy) showOverview(); });
+}
+
+function focusNode(node) {
+  const cy = DIAGRAM.cy;
+  cy.elements().addClass('faded');
+  node.closedNeighborhood().removeClass('faded');
+}
+
+$('btn-diagram-toggle').textContent = '← Overview';
+$('btn-diagram-toggle').addEventListener('click', () => { if (DIAGRAM.data) showOverview(); });
+
+$('btn-diagram-fit').addEventListener('click', () => {
+  if (DIAGRAM.cy) { DIAGRAM.cy.elements().removeClass('faded'); DIAGRAM.cy.fit(undefined, 30); }
+});
+
+// Claude descriptions — fetched once, reused across selections (server-cached by content).
+$('btn-diagram-labels').addEventListener('click', async () => {
+  const btn = $('btn-diagram-labels');
+  const prev = btn.innerHTML;
+  btn.disabled = true;
+  btn.textContent = 'Describing…';
+  try {
+    DIAGRAM.labels = await GET('/api/diagram/labels');
+    if (DIAGRAM.mode === 'overview') showOverview(); else showFile(DIAGRAM.file);
+  } catch (e) {
+    $('diagram-hint').textContent = 'Failed to generate descriptions: ' + e.message;
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = prev;
+  }
+});
+
+$('btn-diagram-png').addEventListener('click', () => {
+  if (!DIAGRAM.cy) return;
+  downloadURI(DIAGRAM.cy.png({ full: true, scale: 2, bg: '#0d1117' }), 'architecture.png');
+});
+
+$('btn-diagram-svg').addEventListener('click', () => {
+  if (!DIAGRAM.cy || typeof DIAGRAM.cy.svg !== 'function') {
+    $('diagram-hint').textContent = 'SVG export unavailable (extension failed to load); PNG still works.';
+    return;
+  }
+  const svg = DIAGRAM.cy.svg({ full: true, bg: '#0d1117' });
+  downloadURI('data:image/svg+xml;utf8,' + encodeURIComponent(svg), 'architecture.svg');
+});
+
+function downloadURI(uri, name) {
+  const a = document.createElement('a');
+  a.href = uri;
+  a.download = name;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+}
+
 // ── Utilities ────────────────────────────────────────────────────────────────
 
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
