@@ -57,3 +57,11 @@ def test_component_has_content_fingerprint(tmp_path):
     _write(tmp_path, "a.py", "def foo():\n    pass\n")
     d = diagram.build_diagram(tmp_path, CONFIG)
     assert _component(d, "a.py")["fingerprint"]  # for label caching
+
+
+def test_functions_include_signature(tmp_path):
+    # Labels need real signatures to describe sparse files (issue #18).
+    _write(tmp_path, "a.py", "def foo(x):\n    return x\n")
+    d = diagram.build_diagram(tmp_path, CONFIG)
+    fn = _component(d, "a.py")["functions"][0]
+    assert fn.get("signature")
