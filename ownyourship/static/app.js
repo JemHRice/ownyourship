@@ -612,7 +612,7 @@ $('end-session-btn').addEventListener('click', async () => {
 
 // ── Architecture diagram ─────────────────────────────────────────────────────
 
-const DIAGRAM = { data: null, labels: null, cy: null, mode: 'overview', file: null, fnIndex: null };
+const DIAGRAM = { data: null, labels: null, cy: null, mode: 'overview', file: null, fnIndex: null, view: null };
 
 // Register the SVG-export extension if the CDN script loaded.
 try { if (window.cytoscapeSvg) cytoscape.use(window.cytoscapeSvg); } catch (e) { /* optional */ }
@@ -659,11 +659,14 @@ function overviewElements() {
 }
 
 // One file's functions, plus a 1-hop boundary (callers AND callees in other files).
-function fileElements(fileId) {
+// Returns the Cytoscape elements plus the classified view: the file's own
+// function ids (alphabetical) and the boundary ids split by direction.
+function fileView(fileId) {
   const data = DIAGRAM.data, idx = DIAGRAM.fnIndex;
   const files = new Set([fileId]);
   const fns = new Set();
   const edges = [];
+  const callers = new Set(), callees = new Set();
 
   for (const f of componentById(fileId).functions) fns.add(f.id);
 
@@ -671,9 +674,12 @@ function fileElements(fileId) {
     if (idx[e.source] === fileId || idx[e.target] === fileId) {
       if (idx[e.source]) { fns.add(e.source); files.add(idx[e.source]); }
       if (idx[e.target]) { fns.add(e.target); files.add(idx[e.target]); }
+      if (idx[e.source] && idx[e.source] !== fileId) callers.add(e.source);
+      if (idx[e.target] && idx[e.target] !== fileId) callees.add(e.target);
       edges.push(e);
     }
   }
+  callers.forEach(id => callees.delete(id));  // both directions → treat as caller
 
   const els = [];
   for (const fid of files) {
@@ -687,7 +693,41 @@ function fileElements(fileId) {
   for (const e of edges)
     if (fns.has(e.source) && fns.has(e.target))
       els.push({ data: { id: 'fe:' + e.source + '>' + e.target, source: e.source, target: e.target } });
-  return els;
+
+  const own = componentById(fileId).functions.map(f => f.id)
+    .sort((a, b) => fnName(a).localeCompare(fnName(b)));
+  return { fileId, els, own, callers: [...callers].sort(), callees: [...callees].sort() };
+}
+
+function fnName(fid) { return fid.split('::').pop(); }
+
+// Fixed positions for the drill-down (#22): cose scatters disconnected nodes —
+// and non-Python files have no call edges at all — producing a huge empty box.
+// Instead: the file's functions in a compact grid, callers stacked on the
+// left, callees on the right. Positions are node centers.
+function positionFileView(view) {
+  const CELL_H = 54, GAP = 140;
+  const cellW = ids => ids.length
+    ? Math.min(Math.max(...ids.map(i => fnName(i).length), 8), 26) * 8.5 + 40
+    : 0;
+
+  const pos = {};
+  const cols = Math.max(1, Math.ceil(Math.sqrt(view.own.length * 1.8)));
+  const w = cellW(view.own) || 160;
+  view.own.forEach((fid, i) => {
+    pos[fid] = { x: (i % cols) * w, y: Math.floor(i / cols) * CELL_H };
+  });
+  const gridW = (cols - 1) * w, gridH = (Math.ceil(view.own.length / cols) - 1) * CELL_H;
+
+  const stack = (ids, x) => {
+    const y0 = (gridH - (ids.length - 1) * CELL_H * 1.3) / 2;
+    ids.forEach((fid, i) => { pos[fid] = { x, y: y0 + i * CELL_H * 1.3 }; });
+  };
+  stack(view.callers, -(GAP + w / 2 + cellW(view.callers) / 2));
+  stack(view.callees, gridW + GAP + w / 2 + cellW(view.callees) / 2);
+
+  for (const el of view.els)
+    if (pos[el.data.id]) el.position = pos[el.data.id];
 }
 
 // ── Rendering ─────────────────────────────────────────────────────────────────
@@ -696,17 +736,18 @@ function diagramStyle() {
   return [
     { selector: 'node', style: {
       'background-color': '#1f6feb', 'label': 'data(label)', 'color': '#e6edf3',
-      'font-size': 11, 'text-wrap': 'wrap', 'text-max-width': 170,
+      'font-size': 13, 'text-wrap': 'wrap', 'text-max-width': 190,
       'text-valign': 'center', 'text-halign': 'center',
       'border-width': 1, 'border-color': '#30363d',
     } },
     { selector: 'node[kind = "component"]', style: {
       'background-color': '#161b22', 'background-opacity': 0.92, 'shape': 'round-rectangle',
-      'border-color': '#58a6ff', 'border-width': 1.5, 'font-size': 13, 'font-weight': 'bold',
-      'text-valign': 'top', 'padding': '12px', 'color': '#58a6ff',
+      'border-color': '#58a6ff', 'border-width': 1.5, 'font-size': 15, 'font-weight': 'bold',
+      'text-valign': 'top', 'padding': '14px', 'color': '#58a6ff',
     } },
     { selector: 'node[kind = "fn"]', style: {
       'shape': 'round-rectangle', 'width': 'label', 'height': 'label', 'padding': '6px',
+      'text-wrap': 'ellipsis', 'text-max-width': 200,
     } },
     { selector: 'node[boundary = 1]', style: { 'opacity': 0.55, 'border-color': '#8b949e', 'color': '#8b949e' } },
     { selector: 'edge', style: {
@@ -717,13 +758,15 @@ function diagramStyle() {
   ];
 }
 
-function makeCy(elements) {
+function makeCy(elements, preset) {
   if (DIAGRAM.cy) { DIAGRAM.cy.destroy(); DIAGRAM.cy = null; }
   DIAGRAM.cy = cytoscape({
     container: $('cy'),
     elements,
     style: diagramStyle(),
-    layout: { name: 'cose', animate: false, padding: 30, nodeDimensionsIncludeLabels: true },
+    layout: preset
+      ? { name: 'preset', fit: true, padding: 30 }
+      : { name: 'cose', animate: false, padding: 30, nodeDimensionsIncludeLabels: true },
     wheelSensitivity: 0.2,
   });
 }
@@ -746,7 +789,10 @@ function showFile(fileId) {
   const c = componentById(fileId);
   $('diagram-hint').textContent =
     `${c.name} · its functions + immediate cross-file calls (faded = other files) · click a faded file to jump, click empty space for overview`;
-  makeCy(fileElements(fileId));
+  const view = fileView(fileId);
+  DIAGRAM.view = view;
+  positionFileView(view);
+  makeCy(view.els, true);
   DIAGRAM.cy.on('tap', 'node[kind = "component"]', evt => {
     if (evt.target.id() !== DIAGRAM.file) showFile(evt.target.id());
   });
