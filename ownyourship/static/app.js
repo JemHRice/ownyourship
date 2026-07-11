@@ -612,7 +612,10 @@ $('end-session-btn').addEventListener('click', async () => {
 
 // ── Architecture diagram ─────────────────────────────────────────────────────
 
-const DIAGRAM = { data: null, labels: null, cy: null, mode: 'overview', file: null, fnIndex: null };
+const DIAGRAM = {
+  data: null, labels: null, cy: null, mode: 'overview', file: null, fnIndex: null,
+  view: null, fnLabels: {}, autoDescribe: false,
+};
 
 // Register the SVG-export extension if the CDN script loaded.
 try { if (window.cytoscapeSvg) cytoscape.use(window.cytoscapeSvg); } catch (e) { /* optional */ }
@@ -632,11 +635,43 @@ async function openDiagram() {
   DIAGRAM.fnIndex = {};
   for (const c of DIAGRAM.data.components)
     for (const f of c.functions) DIAGRAM.fnIndex[f.id] = c.id;  // function id -> file
+  renderLegend();
   showOverview();
 }
 
 function componentById(id) {
   return DIAGRAM.data.components.find(c => c.id === id);
+}
+
+// ── Language accents (#25) ────────────────────────────────────────────────────
+// Dark-surface steps from a CVD-validated categorical palette. Color is a
+// redundant channel here — every node and legend chip carries its name.
+
+const EXT_LANG = {
+  py: 'Python', js: 'JavaScript', jsx: 'JavaScript', ts: 'TypeScript', tsx: 'TypeScript',
+  go: 'Go', rs: 'Rust', java: 'Java', kt: 'Kotlin',
+};
+const LANG_COLORS = {
+  Python: '#3987e5', JavaScript: '#c98500', TypeScript: '#199e70', Go: '#9085e9',
+  Rust: '#d95926', Java: '#e66767', Kotlin: '#d55181',
+};
+
+function langOf(name) {
+  return EXT_LANG[name.split('.').pop().toLowerCase()] || null;
+}
+
+function componentNodeData(c, extra) {
+  const lang = langOf(c.name);
+  const data = Object.assign({ id: c.id, kind: 'component' }, extra);
+  if (lang) data.langColor = LANG_COLORS[lang];
+  return data;
+}
+
+function renderLegend() {
+  const langs = [...new Set(DIAGRAM.data.components.map(c => langOf(c.name)).filter(Boolean))];
+  $('diagram-legend').innerHTML = langs.map(l =>
+    `<span class="lang-chip"><i style="background:${LANG_COLORS[l]}"></i>${l}</span>`
+  ).join('');
 }
 
 function diagramComponentLabel(c) {
@@ -651,7 +686,7 @@ function overviewElements() {
   const ids = new Set(data.components.map(c => c.id));
   const els = [];
   for (const c of data.components)
-    els.push({ data: { id: c.id, label: diagramComponentLabel(c), kind: 'component' } });
+    els.push({ data: componentNodeData(c, { label: diagramComponentLabel(c) }) });
   for (const e of data.component_edges)
     if (ids.has(e.source) && ids.has(e.target))
       els.push({ data: { id: 'ce:' + e.source + '>' + e.target, source: e.source, target: e.target } });
@@ -659,11 +694,14 @@ function overviewElements() {
 }
 
 // One file's functions, plus a 1-hop boundary (callers AND callees in other files).
-function fileElements(fileId) {
+// Returns the Cytoscape elements plus the classified view: the file's own
+// function ids (alphabetical) and the boundary ids split by direction.
+function fileView(fileId) {
   const data = DIAGRAM.data, idx = DIAGRAM.fnIndex;
   const files = new Set([fileId]);
   const fns = new Set();
   const edges = [];
+  const callers = new Set(), callees = new Set();
 
   for (const f of componentById(fileId).functions) fns.add(f.id);
 
@@ -671,15 +709,18 @@ function fileElements(fileId) {
     if (idx[e.source] === fileId || idx[e.target] === fileId) {
       if (idx[e.source]) { fns.add(e.source); files.add(idx[e.source]); }
       if (idx[e.target]) { fns.add(e.target); files.add(idx[e.target]); }
+      if (idx[e.source] && idx[e.source] !== fileId) callers.add(e.source);
+      if (idx[e.target] && idx[e.target] !== fileId) callees.add(e.target);
       edges.push(e);
     }
   }
+  callers.forEach(id => callees.delete(id));  // both directions → treat as caller
 
   const els = [];
   for (const fid of files) {
     const isSel = fid === fileId;
     const c = componentById(fid);
-    els.push({ data: { id: fid, label: isSel ? diagramComponentLabel(c) : c.name, kind: 'component', boundary: isSel ? 0 : 1 } });
+    els.push({ data: componentNodeData(c, { label: isSel ? diagramComponentLabel(c) : c.name, boundary: isSel ? 0 : 1 }) });
     for (const f of c.functions)
       if (fns.has(f.id))
         els.push({ data: { id: f.id, parent: fid, label: f.name, kind: 'fn', boundary: isSel ? 0 : 1 } });
@@ -687,7 +728,46 @@ function fileElements(fileId) {
   for (const e of edges)
     if (fns.has(e.source) && fns.has(e.target))
       els.push({ data: { id: 'fe:' + e.source + '>' + e.target, source: e.source, target: e.target } });
-  return els;
+
+  const own = componentById(fileId).functions.map(f => f.id)
+    .sort((a, b) => fnName(a).localeCompare(fnName(b)));
+  return { fileId, els, own, callers: [...callers].sort(), callees: [...callees].sort() };
+}
+
+function fnName(fid) { return fid.split('::').pop(); }
+
+// Fixed positions for the drill-down (#22): cose scatters disconnected nodes —
+// and non-Python files have no call edges at all — producing a huge empty box.
+// Instead: the file's functions in a compact grid, callers stacked on the
+// left, callees on the right. Positions are node centers.
+function positionFileView(view) {
+  const CELL_H = 54, GAP = 140;
+  const cellW = ids => ids.length
+    ? Math.min(Math.max(...ids.map(i => fnName(i).length), 8), 26) * 8.5 + 40
+    : 0;
+
+  const pos = {};
+  const w = cellW(view.own) || 160;
+  // Column count from the cell dimensions and the canvas's real aspect ratio:
+  // cells are ~5x wider than tall, so a naive sqrt grid comes out as a thin
+  // strip and fit-zoom crushes the labels.
+  const box = $('cy');
+  const aspect = box.clientWidth && box.clientHeight ? box.clientWidth / box.clientHeight : 1.4;
+  const cols = Math.max(1, Math.round(Math.sqrt(view.own.length * CELL_H * aspect / w)) || 1);
+  view.own.forEach((fid, i) => {
+    pos[fid] = { x: (i % cols) * w, y: Math.floor(i / cols) * CELL_H };
+  });
+  const gridW = (cols - 1) * w, gridH = (Math.ceil(view.own.length / cols) - 1) * CELL_H;
+
+  const stack = (ids, x) => {
+    const y0 = (gridH - (ids.length - 1) * CELL_H * 1.3) / 2;
+    ids.forEach((fid, i) => { pos[fid] = { x, y: y0 + i * CELL_H * 1.3 }; });
+  };
+  stack(view.callers, -(GAP + w / 2 + cellW(view.callers) / 2));
+  stack(view.callees, gridW + GAP + w / 2 + cellW(view.callees) / 2);
+
+  for (const el of view.els)
+    if (pos[el.data.id]) el.position = pos[el.data.id];
 }
 
 // ── Rendering ─────────────────────────────────────────────────────────────────
@@ -696,17 +776,21 @@ function diagramStyle() {
   return [
     { selector: 'node', style: {
       'background-color': '#1f6feb', 'label': 'data(label)', 'color': '#e6edf3',
-      'font-size': 11, 'text-wrap': 'wrap', 'text-max-width': 170,
+      'font-size': 13, 'text-wrap': 'wrap', 'text-max-width': 190,
       'text-valign': 'center', 'text-halign': 'center',
       'border-width': 1, 'border-color': '#30363d',
     } },
     { selector: 'node[kind = "component"]', style: {
       'background-color': '#161b22', 'background-opacity': 0.92, 'shape': 'round-rectangle',
-      'border-color': '#58a6ff', 'border-width': 1.5, 'font-size': 13, 'font-weight': 'bold',
-      'text-valign': 'top', 'padding': '12px', 'color': '#58a6ff',
+      'border-color': '#58a6ff', 'border-width': 1.5, 'font-size': 15, 'font-weight': 'bold',
+      'text-valign': 'top', 'padding': '14px', 'color': '#58a6ff',
     } },
     { selector: 'node[kind = "fn"]', style: {
       'shape': 'round-rectangle', 'width': 'label', 'height': 'label', 'padding': '6px',
+      'text-wrap': 'ellipsis', 'text-max-width': 200,
+    } },
+    { selector: 'node[langColor]', style: {
+      'border-color': 'data(langColor)', 'color': 'data(langColor)',
     } },
     { selector: 'node[boundary = 1]', style: { 'opacity': 0.55, 'border-color': '#8b949e', 'color': '#8b949e' } },
     { selector: 'edge', style: {
@@ -717,21 +801,72 @@ function diagramStyle() {
   ];
 }
 
-function makeCy(elements) {
+function makeCy(elements, preset) {
   if (DIAGRAM.cy) { DIAGRAM.cy.destroy(); DIAGRAM.cy = null; }
   DIAGRAM.cy = cytoscape({
     container: $('cy'),
     elements,
     style: diagramStyle(),
-    layout: { name: 'cose', animate: false, padding: 30, nodeDimensionsIncludeLabels: true },
+    layout: preset
+      ? { name: 'preset', fit: true, padding: 30 }
+      : { name: 'cose', animate: false, padding: 30, nodeDimensionsIncludeLabels: true },
     wheelSensitivity: 0.2,
   });
+}
+
+// ── Side panel (drill-down): the functions in view + one-line descriptions ───
+
+function panelRow(fid, withFile) {
+  const desc = DIAGRAM.fnLabels[fid];
+  const file = withFile ? `<span class="fn-file">${escapeHtml(componentById(DIAGRAM.fnIndex[fid]).name)} · </span>` : '';
+  return `<div class="panel-fn" data-fid="${escapeHtml(fid)}">` +
+    `${file}<code>${escapeHtml(fnName(fid))}</code>` +
+    (desc ? `<div class="fn-desc">${escapeHtml(desc)}</div>` : '') +
+    `</div>`;
+}
+
+function renderPanel(view) {
+  const panel = $('diagram-panel');
+  const section = (title, ids, withFile) => ids.length
+    ? `<div class="panel-section">${title}</div>` + ids.map(fid => panelRow(fid, withFile)).join('')
+    : '';
+  let html = `<h3>${escapeHtml(componentById(view.fileId).name)}</h3>` +
+    section('Functions', view.own) +
+    section('Called from other files', view.callers, true) +
+    section('Calls out to', view.callees, true);
+  const missing = view.own.concat(view.callers, view.callees).some(fid => !DIAGRAM.fnLabels[fid]);
+  if (missing)
+    html += `<div class="panel-note">&#10024; Describe (Claude) adds a one-line description per function.</div>`;
+  panel.innerHTML = html;
+  show(panel);
+  panel.querySelectorAll('.panel-fn').forEach(row => row.addEventListener('click', () => {
+    const node = DIAGRAM.cy && DIAGRAM.cy.getElementById(row.dataset.fid);
+    if (node && node.length) focusNode(node);
+  }));
+}
+
+function syncPanelFocus(fid) {
+  document.querySelectorAll('#diagram-panel .panel-fn').forEach(row => {
+    row.classList.toggle('active', row.dataset.fid === fid);
+    if (row.dataset.fid === fid) row.scrollIntoView({ block: 'nearest' });
+  });
+}
+
+// Fetch descriptions for the functions in view that don't have one yet.
+// Server-side they're cached by content_hash, so repeats cost nothing.
+async function fetchFnLabels(view) {
+  const ids = view.own.concat(view.callers, view.callees).filter(fid => !DIAGRAM.fnLabels[fid]);
+  if (!ids.length) return;
+  const got = await POST('/api/diagram/labels/functions', { function_ids: ids });
+  Object.assign(DIAGRAM.fnLabels, got);
 }
 
 function showOverview() {
   DIAGRAM.mode = 'overview';
   DIAGRAM.file = null;
+  DIAGRAM.focusedFn = null;
   hide($('btn-diagram-toggle'));
+  hide($('diagram-panel'));
   const n = DIAGRAM.data.components.length;
   $('diagram-hint').textContent =
     `${n} component${n !== 1 ? 's' : ''} · arrows are calls · click a file to expand its functions, drag to pan, scroll to zoom`;
@@ -742,11 +877,20 @@ function showOverview() {
 function showFile(fileId) {
   DIAGRAM.mode = 'file';
   DIAGRAM.file = fileId;
+  DIAGRAM.focusedFn = null;
   show($('btn-diagram-toggle'));
   const c = componentById(fileId);
   $('diagram-hint').textContent =
     `${c.name} · its functions + immediate cross-file calls (faded = other files) · click a faded file to jump, click empty space for overview`;
-  makeCy(fileElements(fileId));
+  const view = fileView(fileId);
+  DIAGRAM.view = view;
+  positionFileView(view);
+  makeCy(view.els, true);
+  renderPanel(view);
+  if (DIAGRAM.autoDescribe)
+    fetchFnLabels(view)
+      .then(() => { if (DIAGRAM.file === fileId) renderPanel(view); })
+      .catch(e => { $('diagram-hint').textContent = 'Function descriptions failed: ' + e.message; });
   DIAGRAM.cy.on('tap', 'node[kind = "component"]', evt => {
     if (evt.target.id() !== DIAGRAM.file) showFile(evt.target.id());
   });
@@ -758,23 +902,35 @@ function focusNode(node) {
   const cy = DIAGRAM.cy;
   cy.elements().addClass('faded');
   node.closedNeighborhood().removeClass('faded');
+  const isFn = node.data('kind') === 'fn';
+  DIAGRAM.focusedFn = isFn ? node.id() : null;
+  syncPanelFocus(isFn ? node.id() : null);
 }
 
 $('btn-diagram-toggle').textContent = '← Overview';
 $('btn-diagram-toggle').addEventListener('click', () => { if (DIAGRAM.data) showOverview(); });
 
 $('btn-diagram-fit').addEventListener('click', () => {
-  if (DIAGRAM.cy) { DIAGRAM.cy.elements().removeClass('faded'); DIAGRAM.cy.fit(undefined, 30); }
+  if (!DIAGRAM.cy) return;
+  DIAGRAM.cy.elements().removeClass('faded');
+  DIAGRAM.cy.fit(undefined, 30);
+  DIAGRAM.focusedFn = null;
+  syncPanelFocus(null);
 });
 
-// Claude descriptions — fetched once, reused across selections (server-cached by content).
+// Claude descriptions — fetched once, reused across selections (server-cached
+// by content). In the drill-down it also fills the side panel's per-function
+// descriptions, and future drill-downs keep describing automatically.
 $('btn-diagram-labels').addEventListener('click', async () => {
   const btn = $('btn-diagram-labels');
   const prev = btn.innerHTML;
   btn.disabled = true;
   btn.textContent = 'Describing…';
   try {
-    DIAGRAM.labels = await GET('/api/diagram/labels');
+    const wantFns = DIAGRAM.mode === 'file' ? fetchFnLabels(DIAGRAM.view) : Promise.resolve();
+    if (!DIAGRAM.labels) DIAGRAM.labels = await GET('/api/diagram/labels');
+    await wantFns;
+    DIAGRAM.autoDescribe = true;
     if (DIAGRAM.mode === 'overview') showOverview(); else showFile(DIAGRAM.file);
   } catch (e) {
     $('diagram-hint').textContent = 'Failed to generate descriptions: ' + e.message;
@@ -784,9 +940,43 @@ $('btn-diagram-labels').addEventListener('click', async () => {
   }
 });
 
+// What the export is looking at (#24): title drawn onto the image + filename.
+function exportView() {
+  if (DIAGRAM.mode === 'file') {
+    const file = componentById(DIAGRAM.file).name;
+    if (DIAGRAM.focusedFn) {
+      const fn = fnName(DIAGRAM.focusedFn);
+      return { title: `${file} - ${fn} breakdown`, filename: `${file} - ${fn}_breakdown` };
+    }
+    return { title: `${file} architecture`, filename: `${file}_architecture` };
+  }
+  const proj = ($('proj-name').textContent || 'project').trim();
+  return { title: `${proj} architecture`, filename: `${proj}_architecture` };
+}
+
+function safeFilename(name) {
+  return name.replace(/[\\/:*?"<>|]+/g, '-');
+}
+
 $('btn-diagram-png').addEventListener('click', () => {
   if (!DIAGRAM.cy) return;
-  downloadURI(DIAGRAM.cy.png({ full: true, scale: 2, bg: '#0d1117' }), 'architecture.png');
+  const { title, filename } = exportView();
+  const img = new Image();
+  img.onload = () => {
+    const header = 72;  // px in the scale-2 output, so the title matches node text
+    const canvas = document.createElement('canvas');
+    canvas.width = img.width;
+    canvas.height = img.height + header;
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = '#0d1117';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.fillStyle = '#e6edf3';
+    ctx.font = 'bold 40px -apple-system, "Segoe UI", sans-serif';
+    ctx.fillText(title, 24, 50);
+    ctx.drawImage(img, 0, header);
+    downloadURI(canvas.toDataURL('image/png'), safeFilename(filename) + '.png');
+  };
+  img.src = DIAGRAM.cy.png({ full: true, scale: 2, bg: '#0d1117' });
 });
 
 $('btn-diagram-svg').addEventListener('click', () => {
@@ -794,8 +984,21 @@ $('btn-diagram-svg').addEventListener('click', () => {
     $('diagram-hint').textContent = 'SVG export unavailable (extension failed to load); PNG still works.';
     return;
   }
-  const svg = DIAGRAM.cy.svg({ full: true, bg: '#0d1117' });
-  downloadURI('data:image/svg+xml;utf8,' + encodeURIComponent(svg), 'architecture.svg');
+  const { title, filename } = exportView();
+  let svg = DIAGRAM.cy.svg({ full: true, bg: '#0d1117' });
+  const m = svg.match(/<svg[^>]*\bwidth="([\d.]+)[^"]*"[^>]*\bheight="([\d.]+)/);
+  if (m) {
+    // Nest the graph SVG below a title band; fall back to untitled if the
+    // root tag has no plain width/height to read.
+    const w = parseFloat(m[1]), header = 44;
+    const h = parseFloat(m[2]) + header;
+    const inner = svg.replace(/<\?xml[^>]*\?>\s*/, '');
+    svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}">` +
+      `<rect width="100%" height="100%" fill="#0d1117"/>` +
+      `<text x="18" y="28" fill="#e6edf3" font-family="sans-serif" font-size="20" font-weight="bold">${escapeHtml(title)}</text>` +
+      `<svg y="${header}">` + inner + `</svg></svg>`;
+  }
+  downloadURI('data:image/svg+xml;utf8,' + encodeURIComponent(svg), safeFilename(filename) + '.svg');
 });
 
 function downloadURI(uri, name) {
