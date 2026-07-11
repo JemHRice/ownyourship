@@ -635,11 +635,43 @@ async function openDiagram() {
   DIAGRAM.fnIndex = {};
   for (const c of DIAGRAM.data.components)
     for (const f of c.functions) DIAGRAM.fnIndex[f.id] = c.id;  // function id -> file
+  renderLegend();
   showOverview();
 }
 
 function componentById(id) {
   return DIAGRAM.data.components.find(c => c.id === id);
+}
+
+// ── Language accents (#25) ────────────────────────────────────────────────────
+// Dark-surface steps from a CVD-validated categorical palette. Color is a
+// redundant channel here — every node and legend chip carries its name.
+
+const EXT_LANG = {
+  py: 'Python', js: 'JavaScript', jsx: 'JavaScript', ts: 'TypeScript', tsx: 'TypeScript',
+  go: 'Go', rs: 'Rust', java: 'Java', kt: 'Kotlin',
+};
+const LANG_COLORS = {
+  Python: '#3987e5', JavaScript: '#c98500', TypeScript: '#199e70', Go: '#9085e9',
+  Rust: '#d95926', Java: '#e66767', Kotlin: '#d55181',
+};
+
+function langOf(name) {
+  return EXT_LANG[name.split('.').pop().toLowerCase()] || null;
+}
+
+function componentNodeData(c, extra) {
+  const lang = langOf(c.name);
+  const data = Object.assign({ id: c.id, kind: 'component' }, extra);
+  if (lang) data.langColor = LANG_COLORS[lang];
+  return data;
+}
+
+function renderLegend() {
+  const langs = [...new Set(DIAGRAM.data.components.map(c => langOf(c.name)).filter(Boolean))];
+  $('diagram-legend').innerHTML = langs.map(l =>
+    `<span class="lang-chip"><i style="background:${LANG_COLORS[l]}"></i>${l}</span>`
+  ).join('');
 }
 
 function diagramComponentLabel(c) {
@@ -654,7 +686,7 @@ function overviewElements() {
   const ids = new Set(data.components.map(c => c.id));
   const els = [];
   for (const c of data.components)
-    els.push({ data: { id: c.id, label: diagramComponentLabel(c), kind: 'component' } });
+    els.push({ data: componentNodeData(c, { label: diagramComponentLabel(c) }) });
   for (const e of data.component_edges)
     if (ids.has(e.source) && ids.has(e.target))
       els.push({ data: { id: 'ce:' + e.source + '>' + e.target, source: e.source, target: e.target } });
@@ -688,7 +720,7 @@ function fileView(fileId) {
   for (const fid of files) {
     const isSel = fid === fileId;
     const c = componentById(fid);
-    els.push({ data: { id: fid, label: isSel ? diagramComponentLabel(c) : c.name, kind: 'component', boundary: isSel ? 0 : 1 } });
+    els.push({ data: componentNodeData(c, { label: isSel ? diagramComponentLabel(c) : c.name, boundary: isSel ? 0 : 1 }) });
     for (const f of c.functions)
       if (fns.has(f.id))
         els.push({ data: { id: f.id, parent: fid, label: f.name, kind: 'fn', boundary: isSel ? 0 : 1 } });
@@ -751,6 +783,9 @@ function diagramStyle() {
     { selector: 'node[kind = "fn"]', style: {
       'shape': 'round-rectangle', 'width': 'label', 'height': 'label', 'padding': '6px',
       'text-wrap': 'ellipsis', 'text-max-width': 200,
+    } },
+    { selector: 'node[langColor]', style: {
+      'border-color': 'data(langColor)', 'color': 'data(langColor)',
     } },
     { selector: 'node[boundary = 1]', style: { 'opacity': 0.55, 'border-color': '#8b949e', 'color': '#8b949e' } },
     { selector: 'edge', style: {

@@ -41,6 +41,10 @@ html, body {
 .diagram-controls { display: flex; flex-wrap: wrap; gap: 8px; }
 .diagram-controls .btn-secondary { width: auto; padding: 6px 12px; font-size: 13px; }
 #diagram-hint { margin-bottom: 10px; font-size: 13px; }
+#diagram-legend { display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 8px; }
+#diagram-legend:empty { display: none; }
+.lang-chip { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); }
+.lang-chip i { width: 10px; height: 10px; border-radius: 3px; display: inline-block; }
 #diagram-body { display: flex; gap: 12px; align-items: stretch; }
 #cy {
   flex: 1;
