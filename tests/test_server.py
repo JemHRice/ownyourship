@@ -123,6 +123,34 @@ def test_diagram_labels_endpoint(server_client, monkeypatch):
     assert body and all(v == "a label" for v in body.values())
 
 
+def test_function_labels_requires_scan(server_client):
+    resp = server_client.post("/api/diagram/labels/functions", json={"function_ids": ["x"]})
+    assert resp.status_code == 400
+
+
+def test_function_labels_endpoint(server_client, monkeypatch):
+    from ownyourship import labels
+
+    async def fake_labels(file_name, functions, client):
+        return {f["id"]: "a fn label" for f in functions}
+
+    monkeypatch.setattr(labels, "generate_function_labels", fake_labels)
+    _scan_and_wait(server_client)
+    d = server_client.get("/api/diagram").json()
+    fid = next(f["id"] for c in d["components"] for f in c["functions"])
+    resp = server_client.post("/api/diagram/labels/functions", json={"function_ids": [fid]})
+    assert resp.status_code == 200
+    assert resp.json() == {fid: "a fn label"}
+
+
+def test_function_labels_unknown_id_returns_empty(server_client):
+    _scan_and_wait(server_client)
+    resp = server_client.post("/api/diagram/labels/functions",
+                              json={"function_ids": ["nope.py::ghost"]})
+    assert resp.status_code == 200
+    assert resp.json() == {}
+
+
 # ── 20-question session cap (RED — implementation pending) ────────────────────
 
 SESSION_QUESTION_CAP = 20

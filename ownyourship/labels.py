@@ -50,6 +50,102 @@ async def generate_component_label(component: Dict, client) -> str:
     return "" if _looks_like_a_question(text) else text
 
 
+def _parse_json_object(text: str) -> Dict:
+    """Parse a JSON object the model may have wrapped in a ``` fence."""
+    t = text.strip()
+    if t.startswith("```"):
+        t = t.split("\n", 1)[1] if "\n" in t else ""
+        t = t.rsplit("```", 1)[0]
+    try:
+        parsed = json.loads(t)
+    except json.JSONDecodeError:
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
+async def generate_function_labels(file_name: str, functions: list, client) -> Dict[str, str]:
+    """One-line descriptions for a file's functions, one batched call per file.
+
+    Returns ``{function_id: label}``; ids the model missed or answered with a
+    question are absent.
+    """
+    listing = []
+    for f in functions:
+        sig = f.get("signature") or f["name"]
+        doc = (f.get("docstring") or "").strip().splitlines()
+        first = f"  # {doc[0]}" if doc else ""
+        listing.append(f"- {f['id']}: {sig}{first}")
+    prompt = (
+        f"These functions are defined in a source file named `{file_name}` "
+        f"(one `id: signature` per line, with a docstring line where present):\n"
+        + "\n".join(listing)
+        + "\n\nFrom the names and signatures alone, infer what each function does. "
+        "Reply with ONLY a JSON object mapping each id to ONE short declarative "
+        "sentence (no markdown, no commentary). Do NOT ask for the source code or "
+        "say you lack information; give your best inference."
+    )
+    try:
+        resp = await client.messages.create(
+            model=HAIKU_MODEL,
+            max_tokens=min(4000, 60 * len(functions) + 100),
+            messages=[{"role": "user", "content": prompt}],
+        )
+    except anthropic.APIError:
+        return {}
+    parsed = _parse_json_object(resp.content[0].text)
+    wanted = {f["id"] for f in functions}
+    return {
+        fid: label.strip()
+        for fid, label in parsed.items()
+        if fid in wanted and isinstance(label, str) and not _looks_like_a_question(label.strip())
+    }
+
+
+async def attach_function_labels(diagram: Dict, function_ids: list, cache_path: Path, client) -> Dict[str, str]:
+    """Labels for the requested function ids, cached by each function's content_hash.
+
+    Cache entries live in the same file as component labels under ``fn:``-prefixed
+    keys, so a description regenerates only when the function's body changes.
+    """
+    index = {}
+    for comp in diagram["components"]:
+        for f in comp["functions"]:
+            index[f["id"]] = (comp, f)
+
+    cache = _load_cache(cache_path)
+    out: Dict[str, str] = {}
+    misses: Dict[str, list] = {}
+    for fid in dict.fromkeys(function_ids):  # dedupe, keep order
+        if fid not in index:
+            continue
+        comp, f = index[fid]
+        cached = cache.get("fn:" + fid)
+        if (
+            cached
+            and cached.get("content_hash") == f.get("content_hash")
+            and not _looks_like_a_question(cached.get("label", ""))
+        ):
+            out[fid] = cached["label"]
+            continue
+        misses.setdefault(comp["id"], []).append(f)
+
+    for fns in misses.values():
+        comp = index[fns[0]["id"]][0]
+        generated = await generate_function_labels(comp["name"], fns, client)
+        for f in fns:
+            label = generated.get(f["id"], "")
+            if label:
+                out[f["id"]] = label
+                cache["fn:" + f["id"]] = {"content_hash": f.get("content_hash"), "label": label}
+            else:
+                # Never cache a failure — the next request should retry.
+                cache.pop("fn:" + f["id"], None)
+
+    if misses:
+        _save_cache(cache_path, cache)
+    return out
+
+
 def _load_cache(cache_path: Path) -> Dict:
     try:
         return json.loads(cache_path.read_text(encoding="utf-8"))
