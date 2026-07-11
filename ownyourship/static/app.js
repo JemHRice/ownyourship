@@ -859,6 +859,7 @@ async function fetchFnLabels(view) {
 function showOverview() {
   DIAGRAM.mode = 'overview';
   DIAGRAM.file = null;
+  DIAGRAM.focusedFn = null;
   hide($('btn-diagram-toggle'));
   hide($('diagram-panel'));
   const n = DIAGRAM.data.components.length;
@@ -871,6 +872,7 @@ function showOverview() {
 function showFile(fileId) {
   DIAGRAM.mode = 'file';
   DIAGRAM.file = fileId;
+  DIAGRAM.focusedFn = null;
   show($('btn-diagram-toggle'));
   const c = componentById(fileId);
   $('diagram-hint').textContent =
@@ -895,14 +897,20 @@ function focusNode(node) {
   const cy = DIAGRAM.cy;
   cy.elements().addClass('faded');
   node.closedNeighborhood().removeClass('faded');
-  syncPanelFocus(node.data('kind') === 'fn' ? node.id() : null);
+  const isFn = node.data('kind') === 'fn';
+  DIAGRAM.focusedFn = isFn ? node.id() : null;
+  syncPanelFocus(isFn ? node.id() : null);
 }
 
 $('btn-diagram-toggle').textContent = '← Overview';
 $('btn-diagram-toggle').addEventListener('click', () => { if (DIAGRAM.data) showOverview(); });
 
 $('btn-diagram-fit').addEventListener('click', () => {
-  if (DIAGRAM.cy) { DIAGRAM.cy.elements().removeClass('faded'); DIAGRAM.cy.fit(undefined, 30); }
+  if (!DIAGRAM.cy) return;
+  DIAGRAM.cy.elements().removeClass('faded');
+  DIAGRAM.cy.fit(undefined, 30);
+  DIAGRAM.focusedFn = null;
+  syncPanelFocus(null);
 });
 
 // Claude descriptions — fetched once, reused across selections (server-cached
@@ -927,9 +935,43 @@ $('btn-diagram-labels').addEventListener('click', async () => {
   }
 });
 
+// What the export is looking at (#24): title drawn onto the image + filename.
+function exportView() {
+  if (DIAGRAM.mode === 'file') {
+    const file = componentById(DIAGRAM.file).name;
+    if (DIAGRAM.focusedFn) {
+      const fn = fnName(DIAGRAM.focusedFn);
+      return { title: `${file} - ${fn} breakdown`, filename: `${file} - ${fn}_breakdown` };
+    }
+    return { title: `${file} architecture`, filename: `${file}_architecture` };
+  }
+  const proj = ($('proj-name').textContent || 'project').trim();
+  return { title: `${proj} architecture`, filename: `${proj}_architecture` };
+}
+
+function safeFilename(name) {
+  return name.replace(/[\\/:*?"<>|]+/g, '-');
+}
+
 $('btn-diagram-png').addEventListener('click', () => {
   if (!DIAGRAM.cy) return;
-  downloadURI(DIAGRAM.cy.png({ full: true, scale: 2, bg: '#0d1117' }), 'architecture.png');
+  const { title, filename } = exportView();
+  const img = new Image();
+  img.onload = () => {
+    const header = 56;  // px in the scale-2 output
+    const canvas = document.createElement('canvas');
+    canvas.width = img.width;
+    canvas.height = img.height + header;
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = '#0d1117';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.fillStyle = '#e6edf3';
+    ctx.font = 'bold 26px -apple-system, "Segoe UI", sans-serif';
+    ctx.fillText(title, 24, 38);
+    ctx.drawImage(img, 0, header);
+    downloadURI(canvas.toDataURL('image/png'), safeFilename(filename) + '.png');
+  };
+  img.src = DIAGRAM.cy.png({ full: true, scale: 2, bg: '#0d1117' });
 });
 
 $('btn-diagram-svg').addEventListener('click', () => {
@@ -937,8 +979,21 @@ $('btn-diagram-svg').addEventListener('click', () => {
     $('diagram-hint').textContent = 'SVG export unavailable (extension failed to load); PNG still works.';
     return;
   }
-  const svg = DIAGRAM.cy.svg({ full: true, bg: '#0d1117' });
-  downloadURI('data:image/svg+xml;utf8,' + encodeURIComponent(svg), 'architecture.svg');
+  const { title, filename } = exportView();
+  let svg = DIAGRAM.cy.svg({ full: true, bg: '#0d1117' });
+  const m = svg.match(/<svg[^>]*\bwidth="([\d.]+)[^"]*"[^>]*\bheight="([\d.]+)/);
+  if (m) {
+    // Nest the graph SVG below a title band; fall back to untitled if the
+    // root tag has no plain width/height to read.
+    const w = parseFloat(m[1]), header = 44;
+    const h = parseFloat(m[2]) + header;
+    const inner = svg.replace(/<\?xml[^>]*\?>\s*/, '');
+    svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}">` +
+      `<rect width="100%" height="100%" fill="#0d1117"/>` +
+      `<text x="18" y="28" fill="#e6edf3" font-family="sans-serif" font-size="20" font-weight="bold">${escapeHtml(title)}</text>` +
+      `<svg y="${header}">` + inner + `</svg></svg>`;
+  }
+  downloadURI('data:image/svg+xml;utf8,' + encodeURIComponent(svg), safeFilename(filename) + '.svg');
 });
 
 function downloadURI(uri, name) {
