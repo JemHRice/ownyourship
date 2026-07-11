@@ -195,6 +195,21 @@ def test_function_labels_unknown_ids_ignored(tmp_path):
     assert client.calls == []
 
 
+def test_function_labels_chunked_for_large_files(tmp_path):
+    # One giant call for a big file truncates the JSON response at max_tokens
+    # and every label is lost (app.js: 64 functions → 0 labels). Generation
+    # must be chunked into bounded calls.
+    fns = [_fn(f"a.py::f{i:02d}", f"f{i:02d}", f"def f{i:02d}()", "", f"H{i}") for i in range(40)]
+    d = {"components": [{"id": "a.py", "name": "a.py", "fingerprint": "FA", "functions": fns}],
+         "function_edges": [], "component_edges": []}
+    client = _fn_client({f["id"]: f"Does {f['name']}." for f in fns})
+    out = asyncio.run(labels.attach_function_labels(
+        d, [f["id"] for f in fns], tmp_path / "cache.json", client))
+    assert len(out) == 40                       # nothing lost
+    assert len(client.calls) >= 3               # 40 fns → several bounded calls
+    assert all(c["max_tokens"] <= 2000 for c in client.calls)
+
+
 def test_function_labels_parse_fenced_json(tmp_path):
     fenced = "```json\n" + json.dumps({"a.py::foo": "Foos things."}) + "\n```"
     client = FakeAnthropic(text=fenced)
