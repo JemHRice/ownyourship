@@ -71,11 +71,19 @@ async def attach_component_labels(diagram: Dict, cache_path: Path, client) -> Di
     for comp in diagram["components"]:
         fp = comp.get("fingerprint")
         cached = cache.get(comp["id"])
-        if cached and cached.get("fingerprint") == fp:
+        # A fingerprint match alone isn't enough: entries written before the
+        # prompt hardening (#18) can hold a refusal, and the file not changing
+        # would otherwise serve it forever. Re-validate the label itself.
+        if cached and cached.get("fingerprint") == fp and not _looks_like_a_question(cached.get("label", "")):
             comp["label"] = cached["label"]
             continue
         label = await generate_component_label(comp, client)
         comp["label"] = label
-        cache[comp["id"]] = {"fingerprint": fp, "label": label}
+        if label:
+            cache[comp["id"]] = {"fingerprint": fp, "label": label}
+        else:
+            # Never cache a failure with the current fingerprint — that would
+            # make it permanent. Drop any stale entry so the next run retries.
+            cache.pop(comp["id"], None)
     _save_cache(cache_path, cache)
     return diagram
