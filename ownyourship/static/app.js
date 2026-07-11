@@ -747,8 +747,13 @@ function positionFileView(view) {
     : 0;
 
   const pos = {};
-  const cols = Math.max(1, Math.ceil(Math.sqrt(view.own.length * 1.8)));
   const w = cellW(view.own) || 160;
+  // Column count from the cell dimensions and the canvas's real aspect ratio:
+  // cells are ~5x wider than tall, so a naive sqrt grid comes out as a thin
+  // strip and fit-zoom crushes the labels.
+  const box = $('cy');
+  const aspect = box.clientWidth && box.clientHeight ? box.clientWidth / box.clientHeight : 1.4;
+  const cols = Math.max(1, Math.round(Math.sqrt(view.own.length * CELL_H * aspect / w)) || 1);
   view.own.forEach((fid, i) => {
     pos[fid] = { x: (i % cols) * w, y: Math.floor(i / cols) * CELL_H };
   });
@@ -885,7 +890,7 @@ function showFile(fileId) {
   if (DIAGRAM.autoDescribe)
     fetchFnLabels(view)
       .then(() => { if (DIAGRAM.file === fileId) renderPanel(view); })
-      .catch(() => {});
+      .catch(e => { $('diagram-hint').textContent = 'Function descriptions failed: ' + e.message; });
   DIAGRAM.cy.on('tap', 'node[kind = "component"]', evt => {
     if (evt.target.id() !== DIAGRAM.file) showFile(evt.target.id());
   });
