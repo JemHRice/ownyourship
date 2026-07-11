@@ -1,4 +1,5 @@
 import asyncio
+import json
 
 from ownyourship import labels
 from conftest import FakeAnthropic
@@ -38,6 +39,49 @@ def test_label_regenerates_on_fingerprint_change(tmp_path):
     asyncio.run(labels.attach_component_labels(_diagram("F1"), cache, client))
     asyncio.run(labels.attach_component_labels(_diagram("F2"), cache, client))
     assert len(client.calls) == 2  # changed code → regenerated
+
+
+def _write_cache(path, label, fingerprint="F1"):
+    path.write_text(
+        json.dumps({"a.py": {"fingerprint": fingerprint, "label": label}}),
+        encoding="utf-8",
+    )
+
+
+def test_poisoned_cached_label_regenerates(tmp_path):
+    # A refusal cached before the #18 prompt fix must not be served forever:
+    # the fingerprint still matches (the file didn't change), so the cache has
+    # to re-validate the label itself, not just the fingerprint.
+    cache = tmp_path / "cache.json"
+    _write_cache(cache, "I don't see the contents. Could you share the source code?")
+    client = FakeAnthropic(text="Grades answers.")
+    d = _diagram("F1")
+    asyncio.run(labels.attach_component_labels(d, cache, client))
+    assert d["components"][0]["label"] == "Grades answers."
+    assert len(client.calls) == 1
+
+
+def test_empty_cached_label_regenerates(tmp_path):
+    cache = tmp_path / "cache.json"
+    _write_cache(cache, "")
+    client = FakeAnthropic(text="Grades answers.")
+    d = _diagram("F1")
+    asyncio.run(labels.attach_component_labels(d, cache, client))
+    assert d["components"][0]["label"] == "Grades answers."
+    assert len(client.calls) == 1
+
+
+def test_failed_generation_is_not_cached(tmp_path):
+    # A rejected/empty label must not be written with the current fingerprint,
+    # or the failure becomes permanent; the next run should retry.
+    cache = tmp_path / "cache.json"
+    bad = FakeAnthropic(text="Could you share the source code?")
+    asyncio.run(labels.attach_component_labels(_diagram("F1"), cache, bad))
+    good = FakeAnthropic(text="Grades answers.")
+    d = _diagram("F1")
+    asyncio.run(labels.attach_component_labels(d, cache, good))
+    assert len(good.calls) == 1
+    assert d["components"][0]["label"] == "Grades answers."
 
 
 def _component_with_sig():
