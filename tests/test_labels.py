@@ -216,3 +216,29 @@ def test_function_labels_parse_fenced_json(tmp_path):
     out = asyncio.run(labels.attach_function_labels(
         _fn_diagram(), ["a.py::foo"], tmp_path / "cache.json", client))
     assert out == {"a.py::foo": "Foos things."}
+
+
+def test_function_labels_accept_short_name_keys(tmp_path):
+    # The model sometimes keys its JSON by bare function name instead of the
+    # full id (observed live with app.js's long ids) — accept a name when it
+    # maps to exactly one requested function.
+    client = _fn_client({"foo": "Foos things.", "bar": "Bars things."})
+    out = asyncio.run(labels.attach_function_labels(
+        _fn_diagram(), ["a.py::foo", "a.py::bar"], tmp_path / "cache.json", client))
+    assert out == {"a.py::foo": "Foos things.", "a.py::bar": "Bars things."}
+
+
+def test_function_labels_ambiguous_short_names_skipped(tmp_path):
+    # Two requested functions with the same bare name (e.g. methods on two
+    # classes): a name-keyed answer is ambiguous and must not be guessed.
+    d = {
+        "components": [{"id": "a.py", "name": "a.py", "fingerprint": "FA", "functions": [
+            _fn("a.py::A.run", "run", "def run(self)", "", "H1"),
+            _fn("a.py::B.run", "run", "def run(self)", "", "H2"),
+        ]}],
+        "function_edges": [], "component_edges": [],
+    }
+    client = _fn_client({"run": "Runs something."})
+    out = asyncio.run(labels.attach_function_labels(
+        d, ["a.py::A.run", "a.py::B.run"], tmp_path / "cache.json", client))
+    assert out == {}
