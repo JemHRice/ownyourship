@@ -6,192 +6,100 @@
 
 ## Current State
 
-**Date of last update:** 2026-06-22  
-**Status:** Feature-complete v1; 79 passing tests, CI on Python 3.10/3.13, server-side
-trust-boundary hardening complete, content-hash block identity shipped, packaging
-publish-ready. `master` is branch-protected (PR + green CI required) — work on a branch
-and open a PR; never commit to `master` directly.
+**Date of last update:** 2026-07-09
+**Status:** v1 + architecture diagram feature. **116 passing tests**, CI on Python
+3.10/3.13. `master` is branch-protected (PR + green CI required) — branch per change,
+Conventional Commits, TDD red/green, squash-merge. Packaging publish-ready, not on PyPI.
+
+**Open right now:**
+- **PR #28 (`feat/diagram-ux`) — OPEN, awaiting owner browser smoke test.** The diagram
+  UX batch: legible drill-down grid (#22), function-description side panel (#21 frontend),
+  language accent colors (#25), titled exports (#24). Merging closes those four issues.
+- No other open issues or PRs.
 
 ---
 
-## Proposed Features (2026-06-22 — CLARIFIED end state, not yet planned/built)
+## What Was Built (Sessions 1–5)
 
-Requirements interrogated with the owner. These describe the agreed **end result**, not
-an implementation plan.
-
-### 1. Architecture diagram (the real build) — NOT STARTED
-An interactive diagram in the local web UI of how the project fits together:
-- **Nodes**: component boxes (the natural subsystems — scanner, server, db, quiz, grader,
-  config, main, static UI) that **zoom/expand** to reveal the functions/methods inside.
-- **Edges**: a **call graph** ("A calls B") — aggregated between components at the overview
-  level, function-to-function when a box is expanded.
-- **Hybrid generation**: edges are **exact**, parsed from the real code (no invented links);
-  **Claude adds plain-language labels** describing what each component/function does.
-- **Consume both ways**: explore live (pan/zoom/expand, focus on one node to see its
-  connections outward) **and** a button to **export a static copy** (image/SVG/PDF).
-- **Scope**: whole-project overview that narrows to focus on one area.
-
-### 2. Metrics — mostly already done; one small change (reset-on-change) — NOT STARTED
-Coverage is already accurate, cumulative across sessions, and survives close/restart — the
-owner confirmed "persistence is enough," so **no cross-session selection / difficulty work**.
-The one agreed change (owner chose option **b**):
-- **Editing a function's body resets that block's coverage** (it must be re-learned), while
-  every unchanged block keeps its progress. Rename/move alone does NOT reset (already handled
-  by content-hash identity, PR #10).
-- End state: a block counts as "covered" only when answered correctly **against its current
-  body** (its current `content_hash`). The scanner already emits that per-block hash, which
-  changes exactly when the body changes — so this is a small, well-scoped addition.
+Sessions 1–2: full initial build (scanner, quiz, SPA, SQLite) + bug fixes.
+Session 3 (2026-06-10): Windows Ctrl+C, rescan-survives-coverage upsert, rescan button,
+non-Python line ranges, history pagination. Session 4 (2026-06-18): pytest suite, dead-code
+removal, `utcnow` deprecation, default-extension trim. Session 5 (2026-06-22, PRs #1–8):
+CI + CONTRIBUTING + branch protection; server-side trust boundary (20-question cap, session
+validation, FK enforcement, ended-session 409s, server-side answer grading); packaging.
+Details in git history and closed PRs.
 
 ---
 
-## What Was Built (Session 1 — Initial Build)
+## What Was Changed (Session 6 — Diagram feature, 2026-06-22 → 2026-07-01)
 
-Full initial implementation. See git history or original session notes for details.
+- **Reset-on-change coverage** (PR #13): a block counts as covered only when answered
+  against its current `content_hash`; editing a body re-queues it, renames/moves keep
+  history (content-hash identity, PR #10).
+- **Architecture diagram backend** (PRs #14–16, all TDD): `callgraph.py` (Python AST call
+  edges), `diagram.py` + `GET /api/diagram` (components/function_edges/component_edges),
+  `labels.py` + `GET /api/diagram/labels` (Claude one-sentence component labels, cached in
+  `.oys/label_cache.json` by content fingerprint).
+- **Diagram frontend** (PR #17, merged 2026-07-09): Cytoscape.js (CDN) Diagram tab —
+  overview of component boxes + aggregated call arrows; click a file to drill into its
+  functions + 1-hop cross-file boundary; focus/pan/zoom; opt-in ✨ Describe (Claude);
+  PNG/SVG export.
+- **Label prompt hardening** (PR #20, fixes #18): labels are inferred from signatures +
+  first docstring lines, never ask for source; question-shaped responses are dropped.
 
----
+## What Was Changed (Session 7 — Smoke test & diagram UX batch, 2026-07-09)
 
-## What Was Changed (Session 2 — Fixes & Features)
+Owner smoke-tested the Diagram tab; findings filed as issues #21–#25, then fixed:
 
-### Bugs fixed
-- **"Next Question" button not appearing** — `clearFeedback()` was setting `style.display = 'none'` inline, which overrode the CSS `.show { display: block }` class. Fixed by clearing the inline style instead.
-- **Correct answer always A** — Claude consistently places the correct answer first. Fixed in `quiz.py` by shuffling MC options after generation and remapping `correct_answer` to the new position.
-- **Nav routing after session end** — clicking "Quiz" after viewing stats showed the stale last question. Fixed by clearing `S.sessionId` and `S.currentQuestion` in `showSessionDone()`.
-- **Explanation contradicting itself** — Claude was doing chain-of-thought reasoning inside the JSON explanation field, changing its answer mid-string. Fixed via prompt rules.
-- **`code_snippet` missing from API response** — server was running old code. Fix required restart. Code snippet now confirmed working after restart.
-
-### Features added
-- **Code snippet display** — relevant lines shown in question card, target lines highlighted, context lines dimmed
-- **20-question session cap** — sessions stop at 20 questions; multiple sessions required to reach 95%
-- **2-strike MC mechanic** — wrong answer 1: that option locks red, "one attempt remaining" shown; wrong answer 2: correct answer revealed, feedback shown
-- **All questions now multiple choice** — free text removed entirely (from quiz generation, server grading path, and UI)
-- **Question History tab** — Stats screen now has Overview + Question History tabs; history shows every past session with each question, your answer, correct answer (if wrong), and explanation
-
-### Prompt improvements
-- No arithmetic/calculation questions
-- No option letter references in explanations
-- Explanations must be a single confident statement — no hedging or reconsidering
-
----
-
-## What Was Changed (Session 3 — Bug-Hunt & Fixes, 2026-06-10)
-
-### Bugs fixed
-- **Ctrl+C dead on Windows** — `shutdown_event.wait()` with no timeout can't be interrupted by Ctrl+C on Windows. `main.py` now polls `wait(timeout=1.0)` in a loop, so both Ctrl+C and the browser End Session button work.
-- **Coverage reset to ~0 on every launch** — `upsert_code_blocks` was DELETE + re-INSERT, so block IDs changed on every scan (and the UI triggers a scan on every page load). All past `question_results.block_id` references went stale, making the 95% achievement impossible across runs — fatal, since the 20-question cap requires multiple sessions. Now a true upsert keyed on `(file_path, block_type, block_name, parent_class)`: existing IDs are preserved and updated in place, new blocks inserted, removed blocks deleted. Verified with a scripted test: answer history and coverage survive rescans, duplicates and deletions handled.
-- **Off-by-one final score** — session-done screen showed `questionCount - 1` as the denominator (e.g. "20/19 correct" on a perfect session). Fixed in `app.js:showSessionDone`.
-- **`migrations` exclusion never worked** — it was in `excluded_patterns` (matched against filenames only); moved to `excluded_dirs`. Note: projects with an existing `.oys/config.json` keep their stored lists and won't pick this up automatically.
-
-### Cleanup
-- **Haiku 4.5 pricing confirmed and updated** — $1.00 input / $5.00 output per 1M tokens (was $0.80/$4.00 Haiku 3.5 proxy, ~20% undercount). `quiz.py` constants updated; model ID `claude-haiku-4-5-20251001` confirmed valid.
-- **Free-text remnants removed** — `grader.grade_free_text` (dead code) deleted; security banner, Hard-mode card, CLI disclaimer, and DISCLAIMER.md no longer claim answers are sent for grading (MC is graded locally — only question generation hits the API).
-- **Dead `all_time_perf` plumbing removed** — `select_next_block` accepted but never used all-time performance data; the param, the per-question DB query, and `db.get_performance_by_block` are gone. (Cross-session fresh-slate is the documented design; reintroduce deliberately if tailored mode should ever use history.)
-- Removed a no-op `SO_REUSEADDR` set *after* `bind()` in `_find_free_port`.
-
-### Known issue accepted as-is
-- `/api/answer` trusts the client-supplied `correct_answer` (the browser already knows the answer before submitting). Self-cheating only — acceptable for a local single-user tool.
-
-### Backlog cleared (same session)
-- **Rescan button** — "⟳ Rescan Project" in the sidebar; triggers `/api/scan`, polls until complete, refreshes block counts. Required a server fix: scan flags now flip *before* the worker thread starts, otherwise a poll right after POST could see a stale `scan_complete=True` and return without rescanning (verified via TestClient).
-- **Non-Python line ranges** — new `scanner._block_end_line` does naive brace matching from the regex match to find the real `line_end` for JS/TS/Go/Rust/Java blocks, so snippets show full bodies. Body-less declarations (`struct Foo(i32);`, arrow funcs without braces) stay single-line. Limitation: braces inside strings/comments aren't lexed — acceptable for snippet display. Covered by tests (JS function/class/arrow, Go struct/method, Rust tuple-struct/fn).
-- **History pagination** — `/api/history` takes `limit` (clamped 1–50) and `offset`; `db.get_history` uses `LIMIT ? OFFSET ?`. UI loads 10 sessions at a time with a "Load more sessions" button that hides when a short page comes back.
-
-### README pass (end of session)
-- Fixed typos ("code that exceeds", "its"), removed the malformed `<URL>` brackets from the clone command, replaced the stale "isn't reliable yet whatsoever" paragraph (that bug was fixed in Session 2), and documented the rescan button and Stats/History tabs.
-- Not done: screenshots and `pipx` install instructions — needs a published package / captured images.
+- **PR #17 merged** (drill-down confirmed working; closed #19).
+- **PR #26 (fixes #23)**: `Describe` was serving a pre-#20 refusal for `grader.py` from
+  the label cache forever — a fingerprint match alone no longer suffices; cached labels are
+  re-validated on read and failures are never cached (they retry). Poisoned caches self-heal
+  on the next Describe. Verified live: the real poisoned entry regenerated correctly.
+- **PR #27 (backend of #21)**: `POST /api/diagram/labels/functions` — one-line Claude
+  descriptions per function, **one batched call per file** (signatures + docstrings only),
+  cached by each function's `content_hash` under `fn:` keys in `label_cache.json`. Takes an
+  explicit id list so boundary functions from other files ride along; unknown ids ignored.
+  Verified live end-to-end (generation, caching, unknown-id handling).
+- **PR #28 (OPEN — closes #21 #22 #24 #25)**, one commit per issue:
+  - **#22 layout**: `cose` scattered disconnected nodes (non-Python files have *zero* call
+    edges — the call graph is Python-AST-only), giving huge empty boxes with confetti edges
+    on app.js/server.py/conftest. Drill-down now uses fixed positions: alphabetical compact
+    grid of the file's functions, callers stacked left, callees right; fonts 13/15.
+  - **#21 panel**: 320px side panel in drill-down listing functions + called-from/calls-out
+    sections; Describe fills one-liners (auto-describes on later drill-downs once opted in);
+    panel row click ↔ node focus sync.
+  - **#25 colors**: component border/title tinted by language (extension-mapped), legend
+    chips for languages present; CVD-validated dark palette; bright/faded state channel
+    untouched.
+  - **#24 exports**: PNG/SVG get a title band + view-specific filename —
+    `<project>_architecture` / `<file>_architecture` / `<file> - <fn>_breakdown`.
 
 ---
 
 ## Known Issues / Incomplete Items
 
-1. **Renamed/moved blocks lose history** — the upsert key is name-based, so renaming a function or moving it to another file orphans its answer history (the block gets a new ID). A content-hash identity would handle renames; not worth it yet.
-
-2. **Brace matching is naive** — `_block_end_line` doesn't lex strings/comments, so a stray `{`/`}` inside one can skew a non-Python snippet's range. Cosmetic only.
-
-3. **JS changes not browser-tested** — Session 3's app.js changes (rescan button, history pagination, score fix) were verified by review only (no Node on this machine for `node --check`). Do a quick browser smoke test on the next `oys` run: rescan mid-welcome, history Load more, session-done score.
-
----
-
-## What Was Changed (Session 4 — Verification, Fixes & Test Suite, 2026-06-18)
-
-### Roadmap claim verified
-- Confirmed the README's "Python = full AST, others = pattern-based" claim against
-  `scanner.py`. Accurate as written. While checking, found that the *default* config
-  included extensions with no scanner patterns (`.rb/.php/.cs/.cpp/.c/.h/.swift`),
-  which would scan to zero blocks silently.
-
-### Fixes
-- **Dead free-text prompt branch removed** — `quiz._build_prompt` carried an unreachable
-  `free_text` JSON-format branch (free text was removed in Session 2); `q_type` was always
-  `multiple_choice`. Dropped the branch and the `q_type` param.
-- **`datetime.utcnow()` deprecation** — Python 3.13 deprecates it. `db.py` now uses a
-  `_utcnow_iso()` helper (`datetime.now(timezone.utc).replace(tzinfo=None)`) that keeps the
-  existing naive-ISO on-disk format so timestamp ordering stays consistent; `config.py`
-  uses the same call inline.
-- **Empty-scan limitation fixed at source** — trimmed `DEFAULT_CONFIG["included_extensions"]`
-  to only `.py` + the languages with scanner patterns (`.js/.ts/.jsx/.tsx/.java/.kt/.go/.rs`).
-  Existing `.oys/config.json` files keep their stored lists (stored wins over defaults), so
-  this only affects new projects. README "Known Limitations" recast accordingly.
-
-### Test suite added (the big one)
-- New `tests/` package + `pytest>=8` under `[project.optional-dependencies] test` in
-  pyproject, with `[tool.pytest.ini_options]`. **57 tests, all passing.**
-- Coverage: `test_scanner.py` (AST + regex langs, exclusions, brace matching, project scan),
-  `test_db.py` (the rescan ID-preservation invariant, insert/delete/dup pairing, stats math,
-  history pagination), `test_quiz.py` (cost, response parsing, MC shuffle invariant, block
-  selection incl. tailored, async `generate_question` via a fake client), `test_grader.py`,
-  `test_config.py` (incl. a guard that every default extension has scanner support),
-  `test_server.py` (TestClient endpoints; `generate_question` mocked).
-- **No network/API key needed** — quiz code takes an injected client; `conftest.FakeAnthropic`
-  supplies canned responses/errors. `conftest.server_app` resets the module-level `_state`
-  singleton per test (that singleton is a known design smell the tests surface).
-- One benign warning: Starlette deprecates using `httpx` with its TestClient (upstream env, not our code).
-
----
-
-## What Was Changed (Session 5 — Testing, Hardening & Process, 2026-06-22)
-
-All work shipped via pull requests (#1–#8), each squash-merged with green CI. The
-dev workflow is now: branch → `test:` (red) → `feat:`/`fix:` (green) → squash-merge.
-
-### Process & tooling
-- GitHub Actions CI (`.github/workflows/ci.yml`) runs the suite on Python 3.10 and 3.13.
-- `CONTRIBUTING.md` (red/green TDD, branch naming, Conventional Commits) + PR template.
-- `.gitattributes` normalizes line endings to LF.
-- **Branch protection on `master`**: requires a PR and the two CI checks; direct pushes
-  blocked (`enforce_admins=false`, so admin can bypass in a pinch).
-
-### Server-side trust-boundary features (all TDD red/green)
-- **20-question session cap** enforced server-side (`db.count_session_answers`).
-- **Session validation**: `/api/question` and `/api/answer` return 404 for unknown sessions.
-- **Foreign-key enforcement**: `PRAGMA foreign_keys = ON`; `upsert_code_blocks` now clears
-  a removed block's answer rows before deleting it, so rescans don't trip the FK.
-- **Reject ended sessions**: both endpoints return 409 once `/api/session/end` is called
-  (`db.session_is_active`).
-- **Server-side answer integrity**: the server stores the correct answer per served
-  question in `_state.pending_answers[(session_id, block_id)]` and grades against it,
-  ignoring the client-supplied `correct_answer`; answering an unserved block returns 409.
-
-### Coverage & packaging
-- Added tests for `/api/stats`, `end_session` cost, Java/Kotlin scanning, the
-  block-exhaustion finish. Suite is now **75 tests**.
-- `pyproject` is distribution-ready (SPDX MIT, classifiers, URLs); README documents a
-  `pipx` install. Not yet published to PyPI.
+1. **Brace matching is naive** — `_block_end_line` doesn't lex strings/comments, so a stray
+   brace inside one can skew a non-Python snippet's range. Cosmetic only.
+2. **Call graph is Python-only** — JS/TS/Go/etc. files appear as components with functions
+   but no edges. The #22 grid layout makes them legible anyway; real cross-language call
+   extraction is roadmap.
+3. **Frontend JS is review-verified only** (no Node/browser in the dev environment) — the
+   owner browser-tests each frontend PR before merge. PR #28 is the one awaiting that now.
+4. `/api/answer` self-cheating remains acceptable-by-design for a local single-user tool
+   (server-side grading shipped in Session 5; "B-full" withholding of `correct_answer`
+   from the client would need frontend rework).
 
 ---
 
 ## Next Steps
 
-1. **Content-hash block identity** — make answer history survive renames/moves (today the
-   upsert key is name-based, so a rename orphans history). The active next feature.
-2. Browser smoke test of the Session 3 UI changes (see known issue 3) — still outstanding.
-3. README screenshots (need a browser + API key) and a PyPI publish-on-tag workflow.
-4. Refactor `server._state` off the module-level singleton (DI) so server tests needn't
-   reset shared state — would also allow running the app twice in-process.
-5. "B-full" answer integrity: withhold `correct_answer` from the client and grade each
-   attempt server-side (needs frontend rework).
-6. Low-priority coverage: `/api/shutdown`, scanner signature edge cases, `get_code_context`
-   out-of-range lines. README roadmap also lists proper (non-regex) parsers for non-Python
-   languages and more quiz modes.
+1. **Owner smoke test → merge PR #28** (checklist is in the PR body): drill into app.js and
+   server.py, Describe, panel interactions, legend, PNG/SVG exports from all three views.
+2. README screenshots (browser + key needed) and a PyPI publish-on-tag workflow.
+3. Refactor `server._state` off the module-level singleton (DI).
+4. Low-priority coverage: `/api/shutdown`, scanner signature edges, `get_code_context`
+   out-of-range lines; proper (non-regex) parsers for non-Python languages; more quiz modes.
 
 ---
 
@@ -201,24 +109,26 @@ dev workflow is now: branch → `test:` (red) → `feat:`/`fix:` (green) → squ
 ownyourship/
 ├── ownyourship/
 │   ├── main.py       — CLI entry point, disclaimer, server lifecycle
-│   ├── server.py     — FastAPI, all REST endpoints
-│   ├── scanner.py    — AST (Python) + regex (JS/TS/Go/Rust/Java) scanner
+│   ├── server.py     — FastAPI, all REST endpoints (incl. /api/diagram*)
+│   ├── scanner.py    — AST (Python) + regex (JS/TS/Go/Rust/Java/Kotlin) scanner
+│   ├── callgraph.py  — Python AST call-edge extraction
+│   ├── diagram.py    — assembles components + edges for /api/diagram
+│   ├── labels.py     — Claude component/function labels + .oys/label_cache.json
 │   ├── quiz.py       — Haiku question generation, MC shuffle, block selector
-│   ├── grader.py     — MC grading only (free text removed)
-│   ├── db.py         — SQLite schema + all queries incl. get_history()
+│   ├── grader.py     — MC grading (local only)
+│   ├── db.py         — SQLite schema + all queries
 │   ├── config.py     — .oys/config.json management
-│   └── static/       — Dark-mode SPA (index.html, style.css, app.js)
-├── venv/             — Python 3.13 venv, all deps installed
-├── pyproject.toml
-├── DISCLAIMER.md
-├── .gitignore
-├── .env.example
-└── README.md
+│   └── static/       — Dark-mode SPA (index.html, style.css, app.js, Cytoscape via CDN)
+├── tests/            — pytest suite (116 tests; FakeAnthropic, no network)
+├── .github/          — CI (3.10/3.13), PR template
+├── venv/             — Python 3.13 venv
+├── pyproject.toml    — publish-ready, optional dep group [test]
+└── README.md / DISCLAIMER.md / CONTRIBUTING.md
 ```
 
 ## Environment
 
-- Python 3.13, venv at `venv\Scripts\activate`
-- `oys` command available after activation
+- Python 3.13, venv at `venv\Scripts\activate`; `oys` command after activation
 - API key at `%USERPROFILE%\.oys\.env`
-- Run against the ownyourship repo itself for testing: `oys C:\Users\jemhr\MLProjects\ownyourship`
+- Run against this repo itself: `oys C:\Users\jemhr\MLProjects\ownyourship`
+- No Node/browser for JS verification — frontend PRs get owner browser smoke tests
