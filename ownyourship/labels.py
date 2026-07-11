@@ -99,11 +99,24 @@ async def generate_function_labels(file_name: str, functions: list, client) -> D
         return {}
     parsed = _parse_json_object(resp.content[0].text)
     wanted = {f["id"] for f in functions}
-    return {
-        fid: label.strip()
-        for fid, label in parsed.items()
-        if fid in wanted and isinstance(label, str) and not _looks_like_a_question(label.strip())
-    }
+    # The model doesn't always echo the full ids — with long ids it keys the
+    # JSON by bare function name instead. Accept a name that maps to exactly
+    # one requested function; ambiguous names are dropped, never guessed.
+    by_name: Dict[str, list] = {}
+    for f in functions:
+        by_name.setdefault(f["name"], []).append(f["id"])
+    out: Dict[str, str] = {}
+    for key, label in parsed.items():
+        if not isinstance(label, str):
+            continue
+        label = label.strip()
+        if _looks_like_a_question(label):
+            continue
+        if key in wanted:
+            out[key] = label
+        elif len(by_name.get(key, [])) == 1:
+            out[by_name[key][0]] = label
+    return out
 
 
 async def attach_function_labels(diagram: Dict, function_ids: list, cache_path: Path, client) -> Dict[str, str]:
