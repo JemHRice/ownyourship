@@ -109,3 +109,95 @@ def test_label_drops_question_response():
     client = FakeAnthropic(text="I don't see the contents. Could you share the source code?")
     label = asyncio.run(labels.generate_component_label(_component_with_sig(), client))
     assert label == ""
+
+
+# ── Function-level labels (#21) ───────────────────────────────────────────────
+
+def _fn(fid, name, sig, doc="", chash="H1"):
+    return {"id": fid, "name": name, "signature": sig, "docstring": doc,
+            "type": "function", "parent_class": None, "content_hash": chash}
+
+
+def _fn_diagram():
+    return {
+        "components": [
+            {"id": "a.py", "name": "a.py", "fingerprint": "FA", "functions": [
+                _fn("a.py::foo", "foo", "def foo(x) -> int", "Do the foo.", "H-foo"),
+                _fn("a.py::bar", "bar", "def bar() -> None", "", "H-bar"),
+            ]},
+            {"id": "b.py", "name": "b.py", "fingerprint": "FB", "functions": [
+                _fn("b.py::baz", "baz", "def baz()", "", "H-baz"),
+            ]},
+        ],
+        "function_edges": [], "component_edges": [],
+    }
+
+
+def _fn_client(mapping):
+    return FakeAnthropic(text=json.dumps(mapping))
+
+
+def test_function_labels_generated_batched_per_file(tmp_path):
+    client = _fn_client({"a.py::foo": "Foos things.", "a.py::bar": "Bars things."})
+    out = asyncio.run(labels.attach_function_labels(
+        _fn_diagram(), ["a.py::foo", "a.py::bar"], tmp_path / "cache.json", client))
+    assert out == {"a.py::foo": "Foos things.", "a.py::bar": "Bars things."}
+    assert len(client.calls) == 1  # one batched call for the whole file
+    prompt = client.calls[0]["messages"][0]["content"]
+    assert "def foo(x) -> int" in prompt and "Do the foo." in prompt
+
+
+def test_function_labels_grouped_one_call_per_file(tmp_path):
+    client = _fn_client({"a.py::foo": "Foos.", "b.py::baz": "Bazzes."})
+    asyncio.run(labels.attach_function_labels(
+        _fn_diagram(), ["a.py::foo", "b.py::baz"], tmp_path / "cache.json", client))
+    assert len(client.calls) == 2  # two files → two calls
+
+
+def test_function_labels_cached_by_content_hash(tmp_path):
+    cache = tmp_path / "cache.json"
+    first = _fn_client({"a.py::foo": "Foos things."})
+    asyncio.run(labels.attach_function_labels(_fn_diagram(), ["a.py::foo"], cache, first))
+    second = _fn_client({"a.py::foo": "SHOULD NOT BE ASKED"})
+    out = asyncio.run(labels.attach_function_labels(_fn_diagram(), ["a.py::foo"], cache, second))
+    assert out == {"a.py::foo": "Foos things."}
+    assert second.calls == []
+
+
+def test_function_label_regenerates_on_hash_change(tmp_path):
+    cache = tmp_path / "cache.json"
+    asyncio.run(labels.attach_function_labels(
+        _fn_diagram(), ["a.py::foo"], cache, _fn_client({"a.py::foo": "Old."})))
+    d = _fn_diagram()
+    d["components"][0]["functions"][0]["content_hash"] = "H-foo-2"
+    client = _fn_client({"a.py::foo": "New."})
+    out = asyncio.run(labels.attach_function_labels(d, ["a.py::foo"], cache, client))
+    assert out == {"a.py::foo": "New."}
+    assert len(client.calls) == 1
+
+
+def test_function_label_question_dropped_and_not_cached(tmp_path):
+    cache = tmp_path / "cache.json"
+    bad = _fn_client({"a.py::foo": "Could you share the source code?"})
+    out = asyncio.run(labels.attach_function_labels(_fn_diagram(), ["a.py::foo"], cache, bad))
+    assert out == {}
+    good = _fn_client({"a.py::foo": "Foos things."})
+    out = asyncio.run(labels.attach_function_labels(_fn_diagram(), ["a.py::foo"], cache, good))
+    assert out == {"a.py::foo": "Foos things."}
+    assert len(good.calls) == 1  # the failure was not cached; retried
+
+
+def test_function_labels_unknown_ids_ignored(tmp_path):
+    client = _fn_client({})
+    out = asyncio.run(labels.attach_function_labels(
+        _fn_diagram(), ["nope.py::ghost"], tmp_path / "cache.json", client))
+    assert out == {}
+    assert client.calls == []
+
+
+def test_function_labels_parse_fenced_json(tmp_path):
+    fenced = "```json\n" + json.dumps({"a.py::foo": "Foos things."}) + "\n```"
+    client = FakeAnthropic(text=fenced)
+    out = asyncio.run(labels.attach_function_labels(
+        _fn_diagram(), ["a.py::foo"], tmp_path / "cache.json", client))
+    assert out == {"a.py::foo": "Foos things."}
