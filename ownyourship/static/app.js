@@ -813,7 +813,7 @@ function makeCy(elements, preset) {
 
 function panelRow(fid, withFile) {
   const desc = DIAGRAM.fnLabels[fid];
-  const file = withFile ? `<span class="fn-file">${escapeHtml(DIAGRAM.fnIndex[fid])} · </span>` : '';
+  const file = withFile ? `<span class="fn-file">${escapeHtml(componentById(DIAGRAM.fnIndex[fid]).name)} · </span>` : '';
   return `<div class="panel-fn" data-fid="${escapeHtml(fid)}">` +
     `${file}<code>${escapeHtml(fnName(fid))}</code>` +
     (desc ? `<div class="fn-desc">${escapeHtml(desc)}</div>` : '') +
@@ -958,7 +958,7 @@ $('btn-diagram-png').addEventListener('click', () => {
   const { title, filename } = exportView();
   const img = new Image();
   img.onload = () => {
-    const header = 56;  // px in the scale-2 output
+    const header = 72;  // px in the scale-2 output, so the title matches node text
     const canvas = document.createElement('canvas');
     canvas.width = img.width;
     canvas.height = img.height + header;
@@ -966,8 +966,8 @@ $('btn-diagram-png').addEventListener('click', () => {
     ctx.fillStyle = '#0d1117';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
     ctx.fillStyle = '#e6edf3';
-    ctx.font = 'bold 26px -apple-system, "Segoe UI", sans-serif';
-    ctx.fillText(title, 24, 38);
+    ctx.font = 'bold 40px -apple-system, "Segoe UI", sans-serif';
+    ctx.fillText(title, 24, 50);
     ctx.drawImage(img, 0, header);
     downloadURI(canvas.toDataURL('image/png'), safeFilename(filename) + '.png');
   };
