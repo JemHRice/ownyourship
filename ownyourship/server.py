@@ -264,6 +264,19 @@ def create_app(
         await labels_mod.attach_component_labels(d, cache_path, _state.client)
         return {c["id"]: c.get("label") for c in d["components"]}
 
+    class FunctionLabelsReq(BaseModel):
+        function_ids: list[str]
+
+    @app.post("/api/diagram/labels/functions")
+    async def get_function_labels(req: FunctionLabelsReq):
+        if not _state.scan_complete:
+            raise HTTPException(400, "Scan not complete")
+        d = diagram_mod.build_diagram(_state.project_path, _state.config)
+        cache_path = _state.project_path / ".oys" / "label_cache.json"
+        return await labels_mod.attach_function_labels(
+            d, req.function_ids[:300], cache_path, _state.client
+        )
+
     # ── Stats ────────────────────────────────────────────────────────────────
 
     @app.get("/api/stats")
