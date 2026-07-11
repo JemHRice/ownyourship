@@ -63,6 +63,11 @@ def _parse_json_object(text: str) -> Dict:
     return parsed if isinstance(parsed, dict) else {}
 
 
+# Functions per generation call; keeps each JSON response safely inside its
+# token budget so it always parses.
+_FN_LABEL_CHUNK = 16
+
+
 async def generate_function_labels(file_name: str, functions: list, client) -> Dict[str, str]:
     """One-line descriptions for a file's functions, one batched call per file.
 
@@ -87,7 +92,7 @@ async def generate_function_labels(file_name: str, functions: list, client) -> D
     try:
         resp = await client.messages.create(
             model=HAIKU_MODEL,
-            max_tokens=min(4000, 60 * len(functions) + 100),
+            max_tokens=90 * len(functions) + 150,
             messages=[{"role": "user", "content": prompt}],
         )
     except anthropic.APIError:
@@ -131,7 +136,11 @@ async def attach_function_labels(diagram: Dict, function_ids: list, cache_path: 
 
     for fns in misses.values():
         comp = index[fns[0]["id"]][0]
-        generated = await generate_function_labels(comp["name"], fns, client)
+        # Bounded chunks: one call for a big file (app.js: 64 fns) truncates
+        # the JSON response at max_tokens and loses every label.
+        generated = {}
+        for i in range(0, len(fns), _FN_LABEL_CHUNK):
+            generated.update(await generate_function_labels(comp["name"], fns[i:i + _FN_LABEL_CHUNK], client))
         for f in fns:
             label = generated.get(f["id"], "")
             if label:
