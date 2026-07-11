@@ -612,7 +612,10 @@ $('end-session-btn').addEventListener('click', async () => {
 
 // ── Architecture diagram ─────────────────────────────────────────────────────
 
-const DIAGRAM = { data: null, labels: null, cy: null, mode: 'overview', file: null, fnIndex: null, view: null };
+const DIAGRAM = {
+  data: null, labels: null, cy: null, mode: 'overview', file: null, fnIndex: null,
+  view: null, fnLabels: {}, autoDescribe: false,
+};
 
 // Register the SVG-export extension if the CDN script loaded.
 try { if (window.cytoscapeSvg) cytoscape.use(window.cytoscapeSvg); } catch (e) { /* optional */ }
@@ -771,10 +774,58 @@ function makeCy(elements, preset) {
   });
 }
 
+// ── Side panel (drill-down): the functions in view + one-line descriptions ───
+
+function panelRow(fid, withFile) {
+  const desc = DIAGRAM.fnLabels[fid];
+  const file = withFile ? `<span class="fn-file">${escapeHtml(DIAGRAM.fnIndex[fid])} · </span>` : '';
+  return `<div class="panel-fn" data-fid="${escapeHtml(fid)}">` +
+    `${file}<code>${escapeHtml(fnName(fid))}</code>` +
+    (desc ? `<div class="fn-desc">${escapeHtml(desc)}</div>` : '') +
+    `</div>`;
+}
+
+function renderPanel(view) {
+  const panel = $('diagram-panel');
+  const section = (title, ids, withFile) => ids.length
+    ? `<div class="panel-section">${title}</div>` + ids.map(fid => panelRow(fid, withFile)).join('')
+    : '';
+  let html = `<h3>${escapeHtml(componentById(view.fileId).name)}</h3>` +
+    section('Functions', view.own) +
+    section('Called from other files', view.callers, true) +
+    section('Calls out to', view.callees, true);
+  const missing = view.own.concat(view.callers, view.callees).some(fid => !DIAGRAM.fnLabels[fid]);
+  if (missing)
+    html += `<div class="panel-note">&#10024; Describe (Claude) adds a one-line description per function.</div>`;
+  panel.innerHTML = html;
+  show(panel);
+  panel.querySelectorAll('.panel-fn').forEach(row => row.addEventListener('click', () => {
+    const node = DIAGRAM.cy && DIAGRAM.cy.getElementById(row.dataset.fid);
+    if (node && node.length) focusNode(node);
+  }));
+}
+
+function syncPanelFocus(fid) {
+  document.querySelectorAll('#diagram-panel .panel-fn').forEach(row => {
+    row.classList.toggle('active', row.dataset.fid === fid);
+    if (row.dataset.fid === fid) row.scrollIntoView({ block: 'nearest' });
+  });
+}
+
+// Fetch descriptions for the functions in view that don't have one yet.
+// Server-side they're cached by content_hash, so repeats cost nothing.
+async function fetchFnLabels(view) {
+  const ids = view.own.concat(view.callers, view.callees).filter(fid => !DIAGRAM.fnLabels[fid]);
+  if (!ids.length) return;
+  const got = await POST('/api/diagram/labels/functions', { function_ids: ids });
+  Object.assign(DIAGRAM.fnLabels, got);
+}
+
 function showOverview() {
   DIAGRAM.mode = 'overview';
   DIAGRAM.file = null;
   hide($('btn-diagram-toggle'));
+  hide($('diagram-panel'));
   const n = DIAGRAM.data.components.length;
   $('diagram-hint').textContent =
     `${n} component${n !== 1 ? 's' : ''} · arrows are calls · click a file to expand its functions, drag to pan, scroll to zoom`;
@@ -793,6 +844,11 @@ function showFile(fileId) {
   DIAGRAM.view = view;
   positionFileView(view);
   makeCy(view.els, true);
+  renderPanel(view);
+  if (DIAGRAM.autoDescribe)
+    fetchFnLabels(view)
+      .then(() => { if (DIAGRAM.file === fileId) renderPanel(view); })
+      .catch(() => {});
   DIAGRAM.cy.on('tap', 'node[kind = "component"]', evt => {
     if (evt.target.id() !== DIAGRAM.file) showFile(evt.target.id());
   });
@@ -804,6 +860,7 @@ function focusNode(node) {
   const cy = DIAGRAM.cy;
   cy.elements().addClass('faded');
   node.closedNeighborhood().removeClass('faded');
+  syncPanelFocus(node.data('kind') === 'fn' ? node.id() : null);
 }
 
 $('btn-diagram-toggle').textContent = '← Overview';
@@ -813,14 +870,19 @@ $('btn-diagram-fit').addEventListener('click', () => {
   if (DIAGRAM.cy) { DIAGRAM.cy.elements().removeClass('faded'); DIAGRAM.cy.fit(undefined, 30); }
 });
 
-// Claude descriptions — fetched once, reused across selections (server-cached by content).
+// Claude descriptions — fetched once, reused across selections (server-cached
+// by content). In the drill-down it also fills the side panel's per-function
+// descriptions, and future drill-downs keep describing automatically.
 $('btn-diagram-labels').addEventListener('click', async () => {
   const btn = $('btn-diagram-labels');
   const prev = btn.innerHTML;
   btn.disabled = true;
   btn.textContent = 'Describing…';
   try {
-    DIAGRAM.labels = await GET('/api/diagram/labels');
+    const wantFns = DIAGRAM.mode === 'file' ? fetchFnLabels(DIAGRAM.view) : Promise.resolve();
+    if (!DIAGRAM.labels) DIAGRAM.labels = await GET('/api/diagram/labels');
+    await wantFns;
+    DIAGRAM.autoDescribe = true;
     if (DIAGRAM.mode === 'overview') showOverview(); else showFile(DIAGRAM.file);
   } catch (e) {
     $('diagram-hint').textContent = 'Failed to generate descriptions: ' + e.message;
