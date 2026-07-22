@@ -89,32 +89,21 @@ def project(tmp_path):
     return tmp_path
 
 
-# ── Server client (resets the module-level _state singleton per test) ───────
+# ── Server client ─────────────────────────────────────────────────────────────
 
 @pytest.fixture
 def server_app(tmp_path):
-    """Build a fresh FastAPI app over a tiny project and reset _state.
+    """Build a fresh FastAPI app over a tiny project. Returns (project_path, app).
 
-    server.py keeps a module-level _state singleton, so without this reset
-    tests would leak scan flags into one another. Returns (project_path, app).
+    create_app builds its own _State per call, so no cross-test reset is needed.
     """
     from ownyourship import db
-    from ownyourship.server import create_app, _state
+    from ownyourship.server import create_app
 
     (tmp_path / "mod.py").write_text("def foo():\n    return 1\n", encoding="utf-8")
     db.init_db(tmp_path)  # main.py always does this before serving
 
     app = create_app(tmp_path, "test-key", threading.Event())
-
-    _state.scan_complete = False
-    _state.scan_in_progress = False
-    _state.scan_error = None
-    _state.current_session_id = None
-    _state.session_tokens_in = 0
-    _state.session_tokens_out = 0
-    _state.session_perf = {}
-    _state.pending_answers = {}
-
     return tmp_path, app
 
 
