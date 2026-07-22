@@ -881,7 +881,7 @@ function showFile(fileId) {
   show($('btn-diagram-toggle'));
   const c = componentById(fileId);
   $('diagram-hint').textContent =
-    `${c.name} · its functions + immediate cross-file calls (faded = other files) · click a faded file to jump, click empty space for overview`;
+    `${c.name} · its functions + immediate cross-file calls (faded = other files) · click a faded file to jump, click empty space to clear focus (click again for overview)`;
   const view = fileView(fileId);
   DIAGRAM.view = view;
   positionFileView(view);
@@ -895,7 +895,19 @@ function showFile(fileId) {
     if (evt.target.id() !== DIAGRAM.file) showFile(evt.target.id());
   });
   DIAGRAM.cy.on('tap', 'node[kind = "fn"]', evt => focusNode(evt.target));
-  DIAGRAM.cy.on('tap', evt => { if (evt.target === DIAGRAM.cy) showOverview(); });
+  // A background tap first clears focus (#32 — there was no way back to the
+  // plain file view without leaving it entirely); only exits to the overview
+  // once nothing is focused.
+  DIAGRAM.cy.on('tap', evt => {
+    if (evt.target !== DIAGRAM.cy) return;
+    if (DIAGRAM.focusedFn) {
+      DIAGRAM.cy.elements().removeClass('faded');
+      DIAGRAM.focusedFn = null;
+      syncPanelFocus(null);
+    } else {
+      showOverview();
+    }
+  });
 }
 
 function focusNode(node) {
