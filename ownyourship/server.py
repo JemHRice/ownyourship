@@ -41,17 +41,18 @@ class _State:
     pending_answers: Dict = {}  # {(session_id, block_id): correct_letter}
 
 
-_state = _State()
-
-
 def create_app(
     project_path: Path, api_key: str, shutdown_event: threading.Event
 ) -> FastAPI:
-    _state.project_path = project_path
-    _state.api_key = api_key
-    _state.shutdown_event = shutdown_event
-    _state.client = anthropic.AsyncAnthropic(api_key=api_key)
-    _state.config = cfg.load_config(project_path)
+    # A fresh _State per call — endpoints below close over this local
+    # `state`, so two apps (e.g. two tests, or two in-process instances)
+    # never share scan flags, session counters, or pending answers.
+    state = _State()
+    state.project_path = project_path
+    state.api_key = api_key
+    state.shutdown_event = shutdown_event
+    state.client = anthropic.AsyncAnthropic(api_key=api_key)
+    state.config = cfg.load_config(project_path)
 
     app = FastAPI(title="OwnYourShip", docs_url=None, redoc_url=None)
     app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
@@ -67,39 +68,39 @@ def create_app(
     @app.get("/api/status")
     async def status():
         blocks = (
-            scanner.get_meaningful_blocks(db.get_all_blocks(_state.project_path))
-            if _state.scan_complete
+            scanner.get_meaningful_blocks(db.get_all_blocks(state.project_path))
+            if state.scan_complete
             else []
         )
         return {
-            "scan_complete": _state.scan_complete,
-            "scan_in_progress": _state.scan_in_progress,
-            "scan_error": _state.scan_error,
+            "scan_complete": state.scan_complete,
+            "scan_in_progress": state.scan_in_progress,
+            "scan_error": state.scan_error,
             "total_blocks": len(blocks),
-            "project_name": _state.project_path.name,
-            "project_path": str(_state.project_path),
+            "project_name": state.project_path.name,
+            "project_path": str(state.project_path),
         }
 
     @app.post("/api/scan")
     async def trigger_scan():
-        if _state.scan_in_progress:
+        if state.scan_in_progress:
             return {"status": "already_scanning"}
         # Flip flags before the thread starts, or a client polling /api/status
         # right after this returns can see a stale scan_complete=True.
-        _state.scan_in_progress = True
-        _state.scan_complete = False
-        _state.scan_error = None
+        state.scan_in_progress = True
+        state.scan_complete = False
+        state.scan_error = None
 
         def _do_scan():
             try:
-                blocks = scanner.scan_project(_state.project_path, _state.config)
-                db.init_db(_state.project_path)
-                db.upsert_code_blocks(_state.project_path, blocks)
-                _state.scan_complete = True
+                blocks = scanner.scan_project(state.project_path, state.config)
+                db.init_db(state.project_path)
+                db.upsert_code_blocks(state.project_path, blocks)
+                state.scan_complete = True
             except Exception as exc:
-                _state.scan_error = str(exc)
+                state.scan_error = str(exc)
             finally:
-                _state.scan_in_progress = False
+                state.scan_in_progress = False
 
         threading.Thread(target=_do_scan, daemon=True).start()
         return {"status": "scanning"}
@@ -113,12 +114,12 @@ def create_app(
     async def start_session(req: StartSessionReq):
         if req.mode not in ("easy", "intermediate", "hard", "tailored"):
             raise HTTPException(400, "Invalid mode")
-        sid = db.create_session(_state.project_path, req.mode)
-        _state.current_session_id = sid
-        _state.session_tokens_in = 0
-        _state.session_tokens_out = 0
-        _state.session_perf = {}
-        _state.pending_answers = {}
+        sid = db.create_session(state.project_path, req.mode)
+        state.current_session_id = sid
+        state.session_tokens_in = 0
+        state.session_tokens_out = 0
+        state.session_perf = {}
+        state.pending_answers = {}
         return {"session_id": sid, "mode": req.mode}
 
     class EndSessionReq(BaseModel):
@@ -126,59 +127,59 @@ def create_app(
 
     @app.post("/api/session/end")
     async def end_session(req: EndSessionReq):
-        cost = quiz_mod.estimate_cost(_state.session_tokens_in, _state.session_tokens_out)
-        total_tok = _state.session_tokens_in + _state.session_tokens_out
-        db.end_session(_state.project_path, req.session_id, total_tok, cost)
+        cost = quiz_mod.estimate_cost(state.session_tokens_in, state.session_tokens_out)
+        total_tok = state.session_tokens_in + state.session_tokens_out
+        db.end_session(state.project_path, req.session_id, total_tok, cost)
         return {"status": "ended", "cost_usd": round(cost, 4)}
 
     # ── Question ─────────────────────────────────────────────────────────────
 
     @app.get("/api/question")
     async def get_question(session_id: int, mode: str):
-        if not _state.scan_complete:
+        if not state.scan_complete:
             raise HTTPException(400, "Scan not complete")
 
-        if not db.session_exists(_state.project_path, session_id):
+        if not db.session_exists(state.project_path, session_id):
             raise HTTPException(404, "Unknown session")
 
-        if not db.session_is_active(_state.project_path, session_id):
+        if not db.session_is_active(state.project_path, session_id):
             raise HTTPException(409, "Session already ended")
 
-        if db.count_session_answers(_state.project_path, session_id) >= MAX_QUESTIONS_PER_SESSION:
+        if db.count_session_answers(state.project_path, session_id) >= MAX_QUESTIONS_PER_SESSION:
             return {
                 "finished": True,
                 "message": f"{MAX_QUESTIONS_PER_SESSION}-question session complete!",
             }
 
-        all_blocks = scanner.get_meaningful_blocks(db.get_all_blocks(_state.project_path))
+        all_blocks = scanner.get_meaningful_blocks(db.get_all_blocks(state.project_path))
         if not all_blocks:
             raise HTTPException(404, "No quizzable blocks found")
 
-        answered = db.get_session_correct_block_ids(_state.project_path, session_id)
+        answered = db.get_session_correct_block_ids(state.project_path, session_id)
 
         block = quiz_mod.select_next_block(
-            all_blocks, answered, mode, _state.session_perf
+            all_blocks, answered, mode, state.session_perf
         )
         if block is None:
             return {"finished": True, "message": "All blocks covered for this session!"}
 
         qdata, in_tok, out_tok = await quiz_mod.generate_question(
-            block, _state.project_path, mode, _state.client, _state.session_perf
+            block, state.project_path, mode, state.client, state.session_perf
         )
-        _state.session_tokens_in += in_tok
-        _state.session_tokens_out += out_tok
+        state.session_tokens_in += in_tok
+        state.session_tokens_out += out_tok
 
-        cost = quiz_mod.estimate_cost(_state.session_tokens_in, _state.session_tokens_out)
-        threshold = _state.config.get("cost_warning_threshold_usd", 0.50)
+        cost = quiz_mod.estimate_cost(state.session_tokens_in, state.session_tokens_out)
+        threshold = state.config.get("cost_warning_threshold_usd", 0.50)
 
         if qdata is None:
             raise HTTPException(500, "Failed to generate question — check API key and try again")
 
         # Remember the correct answer so /api/answer can grade against the server,
         # not the client-supplied value.
-        _state.pending_answers[(session_id, block["id"])] = qdata["correct_answer"]
+        state.pending_answers[(session_id, block["id"])] = qdata["correct_answer"]
 
-        file_abs = _state.project_path / block["file_path"]
+        file_abs = state.project_path / block["file_path"]
         display_snippet = quiz_mod.get_code_context(
             file_abs, block["line_start"], block["line_end"], ctx=2
         )
@@ -206,14 +207,14 @@ def create_app(
 
     @app.post("/api/answer")
     async def submit_answer(req: AnswerReq):
-        if not db.session_exists(_state.project_path, req.session_id):
+        if not db.session_exists(state.project_path, req.session_id):
             raise HTTPException(404, "Unknown session")
 
-        if not db.session_is_active(_state.project_path, req.session_id):
+        if not db.session_is_active(state.project_path, req.session_id):
             raise HTTPException(409, "Session already ended")
 
         # Grade against the answer the server issued, never the client's claim.
-        correct_answer = _state.pending_answers.get((req.session_id, req.block_id))
+        correct_answer = state.pending_answers.get((req.session_id, req.block_id))
         if correct_answer is None:
             raise HTTPException(409, "No pending question for this block")
 
@@ -223,20 +224,20 @@ def create_app(
         )
 
         db.record_answer(
-            _state.project_path, req.session_id, req.block_id, req.mode,
+            state.project_path, req.session_id, req.block_id, req.mode,
             req.question_text, req.question_type, user_answer, correct_answer,
             is_correct, score, feedback, req.explanation,
         )
 
         pid = req.block_id
-        if pid not in _state.session_perf:
-            _state.session_perf[pid] = {"correct": 0, "total": 0}
-        _state.session_perf[pid]["total"] += 1
+        if pid not in state.session_perf:
+            state.session_perf[pid] = {"correct": 0, "total": 0}
+        state.session_perf[pid]["total"] += 1
         if is_correct:
-            _state.session_perf[pid]["correct"] += 1
+            state.session_perf[pid]["correct"] += 1
 
-        cost = quiz_mod.estimate_cost(_state.session_tokens_in, _state.session_tokens_out)
-        threshold = _state.config.get("cost_warning_threshold_usd", 0.50)
+        cost = quiz_mod.estimate_cost(state.session_tokens_in, state.session_tokens_out)
+        threshold = state.config.get("cost_warning_threshold_usd", 0.50)
 
         return {
             "is_correct": is_correct,
@@ -251,17 +252,17 @@ def create_app(
 
     @app.get("/api/diagram")
     async def get_diagram():
-        if not _state.scan_complete:
+        if not state.scan_complete:
             raise HTTPException(400, "Scan not complete")
-        return diagram_mod.build_diagram(_state.project_path, _state.config)
+        return diagram_mod.build_diagram(state.project_path, state.config)
 
     @app.get("/api/diagram/labels")
     async def get_diagram_labels():
-        if not _state.scan_complete:
+        if not state.scan_complete:
             raise HTTPException(400, "Scan not complete")
-        d = diagram_mod.build_diagram(_state.project_path, _state.config)
-        cache_path = _state.project_path / ".oys" / "label_cache.json"
-        await labels_mod.attach_component_labels(d, cache_path, _state.client)
+        d = diagram_mod.build_diagram(state.project_path, state.config)
+        cache_path = state.project_path / ".oys" / "label_cache.json"
+        await labels_mod.attach_component_labels(d, cache_path, state.client)
         return {c["id"]: c.get("label") for c in d["components"]}
 
     class FunctionLabelsReq(BaseModel):
@@ -269,27 +270,27 @@ def create_app(
 
     @app.post("/api/diagram/labels/functions")
     async def get_function_labels(req: FunctionLabelsReq):
-        if not _state.scan_complete:
+        if not state.scan_complete:
             raise HTTPException(400, "Scan not complete")
-        d = diagram_mod.build_diagram(_state.project_path, _state.config)
-        cache_path = _state.project_path / ".oys" / "label_cache.json"
+        d = diagram_mod.build_diagram(state.project_path, state.config)
+        cache_path = state.project_path / ".oys" / "label_cache.json"
         return await labels_mod.attach_function_labels(
-            d, req.function_ids[:300], cache_path, _state.client
+            d, req.function_ids[:300], cache_path, state.client
         )
 
     # ── Stats ────────────────────────────────────────────────────────────────
 
     @app.get("/api/stats")
     async def get_stats():
-        if not _state.scan_complete:
+        if not state.scan_complete:
             return {"error": "Scan not complete yet"}
-        return db.get_stats(_state.project_path)
+        return db.get_stats(state.project_path)
 
     # ── Config ───────────────────────────────────────────────────────────────
 
     @app.get("/api/config")
     async def get_config():
-        c = dict(_state.config)
+        c = dict(state.config)
         c.pop("disclaimer_acknowledged", None)
         c.pop("disclaimer_acknowledged_at", None)
         return c
@@ -300,13 +301,13 @@ def create_app(
     async def get_history(limit: int = 10, offset: int = 0):
         limit = max(1, min(limit, 50))
         offset = max(0, offset)
-        return db.get_history(_state.project_path, limit, offset)
+        return db.get_history(state.project_path, limit, offset)
 
     # ── Shutdown ─────────────────────────────────────────────────────────────
 
     @app.post("/api/shutdown")
     async def shutdown():
-        _state.shutdown_event.set()
+        state.shutdown_event.set()
         return {"status": "shutting_down"}
 
     return app
